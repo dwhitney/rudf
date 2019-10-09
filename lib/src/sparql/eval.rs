@@ -1,5 +1,6 @@
-use crate::model::BlankNode;
+use crate::model::{BlankNode, NamedNode};
 use crate::model::Triple;
+use crate::sparql::algebra::GraphPattern;
 use crate::sparql::model::*;
 use crate::sparql::plan::*;
 use crate::store::numeric_encoder::*;
@@ -45,7 +46,11 @@ pub struct SimpleEvaluator<S: StoreConnection> {
 }
 
 impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
-    pub fn new(dataset: DatasetView<S>, base_iri: Option<Iri<String>>) -> Self {
+    pub fn new(
+        dataset: DatasetView<S>,
+        base_iri: Option<Iri<String>>,
+        service_function: Option<fn (NamedNode) -> (fn(GraphPattern) -> Result<BindingsIterator<'a>>)>
+        ) -> Self {
         Self {
             dataset,
             bnodes_map: Mutex::new(BTreeMap::default()),
