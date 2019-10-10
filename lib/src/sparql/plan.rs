@@ -15,6 +15,10 @@ pub enum PlanNode {
     StaticBindings {
         tuples: Vec<EncodedTuple>,
     },
+    Service {
+        service_name: PatternValue,
+        child: Box<PlanNode>,
+    },
     QuadPatternJoin {
         child: Box<PlanNode>,
         subject: PatternValue,
@@ -100,6 +104,8 @@ impl PlanNode {
                     }
                 }
             }
+
+            PlanNode::Service { child, .. } => child.add_variables(set),
             PlanNode::QuadPatternJoin {
                 child,
                 subject,

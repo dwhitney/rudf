@@ -56,8 +56,8 @@ enum SimplePreparedQueryOptions<S: StoreConnection> {
     },
 }
 
-impl<'a, S: StoreConnection + 'a> SimplePreparedQuery<S> {
-    pub(crate) fn new(
+impl<S: StoreConnection> SimplePreparedQuery<S> {
+    pub(crate) fn new<'a>(
         connection: S,
         query: &str,
         base_iri: Option<&str>,

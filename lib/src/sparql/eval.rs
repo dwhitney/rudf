@@ -46,10 +46,10 @@ pub struct SimpleEvaluator<S: StoreConnection> {
 }
 
 impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
-    pub fn new(
+    pub fn new<'b>(
         dataset: DatasetView<S>,
         base_iri: Option<Iri<String>>,
-        service_function: Option<fn (NamedNode) -> (fn(GraphPattern) -> Result<BindingsIterator<'a>>)>
+        service_function: Option<fn (NamedNode) -> (fn(GraphPattern) -> Result<BindingsIterator<'b>>)>
         ) -> Self {
         Self {
             dataset,
@@ -185,6 +185,12 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }));
                 iter
             })),
+            PlanNode::Service {
+                service_name,
+                child,
+            } => {
+                self.eval_plan(child, from)
+            },
             PlanNode::PathPatternJoin {
                 child,
                 subject,
