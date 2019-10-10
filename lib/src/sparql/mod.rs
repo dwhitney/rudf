@@ -14,12 +14,15 @@ use crate::sparql::algebra::QueryVariants;
 use crate::sparql::eval::SimpleEvaluator;
 use crate::sparql::parser::read_sparql_query;
 use crate::sparql::plan::TripleTemplate;
-use crate::sparql::plan::{DatasetView, PlanNode};
-use crate::sparql::plan_builder::PlanBuilder;
+use crate::sparql::plan::PlanNode;
 use crate::store::StoreConnection;
 use crate::Result;
-use std::fmt;
 
+use std::fmt;
+use rio_api::iri::{Iri};
+
+pub use crate::sparql::plan_builder::PlanBuilder;
+pub use crate::sparql::plan::DatasetView;
 pub use crate::sparql::algebra::GraphPattern;
 pub use crate::sparql::model::BindingsIterator;
 pub use crate::sparql::model::QueryResult;
@@ -28,8 +31,10 @@ pub use crate::sparql::model::Variable;
 
 
 //pub type ServiceHandler<'a> = Option<fn (NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>>;
+// Box<dyn Iterator<Item = Result<Quad>> + 'a>
 
 pub trait ServiceHandler : Copy {
+    //fn handle<'a>(&'a self, node: NamedNode) -> Option<(fn(GraphPattern) -> Result<Box<dyn Iterator<Item = Result<Quad>> + 'a>>)>;
     fn handle<'a>(&'a self, node: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
 }
 
@@ -73,6 +78,7 @@ enum SimplePreparedQueryOptions<S: StoreConnection> {
 }
 
 impl<S: StoreConnection> SimplePreparedQuery<S> {
+
     pub(crate) fn new<'a>(
         connection: S,
         query: &str,
@@ -132,6 +138,21 @@ impl<S: StoreConnection> SimplePreparedQuery<S> {
                     evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
+        }))
+    }
+
+    pub(crate) fn new_from_pattern<'a>(
+        connection: S,
+        pattern: &GraphPattern,
+        base_iri: Option<&str>
+    ) -> Result<Self> {
+        let dataset = DatasetView::new(connection);
+        let (plan, variables) = PlanBuilder::build(dataset.encoder(), pattern)?;
+        let iri = base_iri.map(|i| Iri::parse(i.to_string()).unwrap());
+        Ok(Self(SimplePreparedQueryOptions::Select {
+            plan,
+            variables,
+            evaluator: SimpleEvaluator::new(dataset, iri),
         }))
     }
 }

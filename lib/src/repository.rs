@@ -1,5 +1,6 @@
 use crate::model::*;
 use crate::sparql::PreparedQuery;
+use crate::sparql::GraphPattern;
 use crate::{DatasetSyntax, GraphSyntax, Result};
 use std::io::BufRead;
 
@@ -88,6 +89,13 @@ pub trait RepositoryConnection: Clone {
         query: &str,
         base_iri: Option<&str>
     ) -> Result<Self::PreparedQuery>;
+
+    fn prepare_query_from_pattern<'a>(
+        &'a self,
+        graph_pattern: &'a GraphPattern,
+        base_iri: Option<&'a str>
+    ) -> Result<Self::PreparedQuery>;
+
 
     /// Retrieves quads with a filter on each quad component
     ///

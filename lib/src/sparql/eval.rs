@@ -69,6 +69,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         'a: 'b,
     {
         let iter = self.eval_plan(plan, vec![None; variables.len()], service_handler);
+
         Ok(QueryResult::Bindings(
             self.decode_bindings(iter, variables.to_vec()),
         ))
@@ -199,6 +200,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             PlanNode::Service {
                 service_name,
                 child,
+                graph_pattern,
                 silent,
             } => {
                 match *service_handler {
@@ -214,7 +216,13 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                             
                         match pattern_option {
                             None =>  self.eval_plan(child, from, service_handler),
-                            Some(pattern_fn) => self.eval_plan(child, from, service_handler),
+                            Some(pattern_fn) => {
+                                let (variables, iter) = BindingsIterator::destruct(pattern_fn(graph_pattern.clone()).unwrap());
+                                for b in iter {
+                                    println!("binding: {:?}", b);
+                                };
+                                self.eval_plan(child, from, service_handler)
+                            },
                         }
                     }
                 }

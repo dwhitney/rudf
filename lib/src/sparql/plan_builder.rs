@@ -2,8 +2,9 @@ use crate::model::vocab::xsd;
 use crate::model::Literal;
 use crate::sparql::algebra::*;
 use crate::sparql::model::*;
-use crate::sparql::plan::PlanPropertyPath;
+use crate::sparql::plan::{DatasetView, PlanPropertyPath};
 use crate::sparql::plan::*;
+use crate::store::StoreConnection;
 use crate::store::numeric_encoder::{Encoder, ENCODED_DEFAULT_GRAPH};
 use crate::Result;
 use failure::format_err;
@@ -14,6 +15,12 @@ pub struct PlanBuilder<E: Encoder> {
 }
 
 impl<E: Encoder> PlanBuilder<E> {
+
+    pub fn build_from_connection<C: StoreConnection>(connection: C, pattern: &GraphPattern) ->  Result<(PlanNode, Vec<Variable>)> {
+       let dataset = DatasetView::new(connection);
+       PlanBuilder::build(dataset.encoder(), pattern) 
+    }
+
     pub fn build(encoder: E, pattern: &GraphPattern) -> Result<(PlanNode, Vec<Variable>)> {
         let mut variables = Vec::default();
         let plan = PlanBuilder { encoder }.build_for_graph_pattern(
@@ -95,9 +102,12 @@ impl<E: Encoder> PlanBuilder<E> {
                 self.build_for_graph_pattern(p, variables, graph_name)?
             }
             GraphPattern::Service(n, p, s) => {
+                let service_name = self.pattern_value_from_named_node_or_variable(n, variables)?;
+                let graph_pattern = *p.clone();
                 PlanNode::Service {
-                    service_name: self.pattern_value_from_named_node_or_variable(n, variables)?,
-                    child: Box::new(self.build_for_graph_pattern(p, variables, graph_name)?),
+                    service_name,
+                    child: Box::new(self.build_for_graph_pattern(p, variables, service_name)?),
+                    graph_pattern,
                     silent: *s,
                 }
             },
