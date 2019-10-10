@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use rudf::model::vocab::rdf;
 use rudf::model::vocab::rdfs;
 use rudf::model::*;
-use rudf::sparql::{PreparedQuery, ServiceHandler};
+use rudf::sparql::{NoneService,PreparedQuery};
 use rudf::sparql::{Query, QueryResult, QueryResultSyntax};
 use rudf::{GraphSyntax, MemoryRepository, Repository, RepositoryConnection, Result};
 use std::fmt;
@@ -146,6 +146,7 @@ fn sparql_w3c_query_evaluation_testsuite() -> Result<()> {
             Ok(())
         } else if test.kind == "QueryEvaluationTest" {
             let repository = MemoryRepository::default();
+            let service_handler: Option<NoneService> = None;
             if let Some(data) = &test.data {
                 load_graph_to_repository(&data, &mut repository.connection()?, None)?;
             }
@@ -158,13 +159,13 @@ fn sparql_w3c_query_evaluation_testsuite() -> Result<()> {
             }
             match repository
                 .connection()?
-                .prepare_query(&read_file_to_string(&test.query)?, Some(&test.query), None)
+                .prepare_query(&read_file_to_string(&test.query)?, Some(&test.query))
             {
                 Err(error) => Err(format_err!(
                     "Failure to parse query of {} with error: {}",
                     test, error
                 )),
-                Ok(query) => match query.exec() {
+                Ok(query) => match query.exec(&service_handler) {
                     Err(error) => Err(format_err!(
                         "Failure to execute query of {} with error: {}",
                         test, error

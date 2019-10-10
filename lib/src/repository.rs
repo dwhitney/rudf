@@ -14,7 +14,7 @@ use std::io::BufRead;
 /// ```
 /// use rudf::model::*;
 /// use rudf::{Repository, RepositoryConnection, MemoryRepository, Result};
-/// use crate::rudf::sparql::PreparedQuery;
+/// use crate::rudf::sparql::{NoneService, PreparedQuery};
 /// use rudf::sparql::QueryResult;
 ///
 /// let repository = MemoryRepository::default();
@@ -30,8 +30,9 @@ use std::io::BufRead;
 /// assert_eq!(vec![quad], results.unwrap());
 ///
 /// // SPARQL query
-/// let prepared_query = connection.prepare_query("SELECT ?s WHERE { ?s ?p ?o }", None, None).unwrap();
-/// let results = prepared_query.exec().unwrap();
+/// let service_handler: Option<NoneService> = None;
+/// let prepared_query = connection.prepare_query("SELECT ?s WHERE { ?s ?p ?o }", None).unwrap();
+/// let results = prepared_query.exec(&service_handler).unwrap();
 /// if let QueryResult::Bindings(results) = results {
 ///     assert_eq!(results.into_values_iter().next().unwrap().unwrap()[0], Some(ex.into()));
 /// }
@@ -64,7 +65,7 @@ pub trait RepositoryConnection: Clone {
     /// ```
     /// use rudf::model::*;
     /// use rudf::{Repository, RepositoryConnection, MemoryRepository};
-    /// use rudf::sparql::PreparedQuery;
+    /// use rudf::sparql::{NoneService,PreparedQuery};
     /// use rudf::sparql::QueryResult;
     ///
     /// let repository = MemoryRepository::default();
@@ -75,8 +76,9 @@ pub trait RepositoryConnection: Clone {
     /// connection.insert(&Quad::new(ex.clone(), ex.clone(), ex.clone(), None));
     ///
     /// // SPARQL query
-    /// let prepared_query = connection.prepare_query("SELECT ?s WHERE { ?s ?p ?o }", None, None).unwrap();
-    /// let results = prepared_query.exec().unwrap();
+    /// let service_handler: Option<NoneService> = None;
+    /// let prepared_query = connection.prepare_query("SELECT ?s WHERE { ?s ?p ?o }", None).unwrap();
+    /// let results = prepared_query.exec(&service_handler).unwrap();
     /// if let QueryResult::Bindings(results) = results {
     ///     assert_eq!(results.into_values_iter().next().unwrap().unwrap()[0], Some(ex.into()));
     /// }

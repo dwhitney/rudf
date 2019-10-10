@@ -95,7 +95,6 @@ impl<E: Encoder> PlanBuilder<E> {
                 self.build_for_graph_pattern(p, variables, graph_name)?
             }
             GraphPattern::Service(n, p, s) => {
-                println!("n: {:?}", n);
                 PlanNode::Service {
                     service_name: self.pattern_value_from_named_node_or_variable(n, variables)?,
                     child: Box::new(self.build_for_graph_pattern(p, variables, graph_name)?),
