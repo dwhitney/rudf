@@ -33,6 +33,14 @@ pub trait ServiceHandler : Copy {
     fn handle<'a>(&'a self, node: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
 }
 
+#[derive(Copy, Clone)]
+pub struct NoneService;
+
+impl ServiceHandler for NoneService {
+    fn handle<'a>(&'a self, _: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)> {
+        None
+    }
+}
 
 /// A prepared [SPARQL query](https://www.w3.org/TR/sparql11-query/)
 pub trait PreparedQuery {

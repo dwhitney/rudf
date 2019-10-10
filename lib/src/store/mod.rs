@@ -10,7 +10,7 @@ pub use crate::store::memory::MemoryRepository;
 pub use crate::store::rocksdb::RocksDbRepository;
 
 use crate::model::*;
-use crate::sparql::{ServiceHandler,SimplePreparedQuery};
+use crate::sparql::SimplePreparedQuery;
 use crate::store::numeric_encoder::*;
 use crate::{DatasetSyntax, GraphSyntax, RepositoryConnection, Result};
 use rio_api::parser::{QuadsParser, TriplesParser};

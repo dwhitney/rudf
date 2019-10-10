@@ -1,8 +1,7 @@
 use rudf::model::*;
 use rudf::{Repository, RepositoryConnection, MemoryRepository, Result};
-use rudf::sparql::{NoneService, PreparedQuery};
+use rudf::sparql::PreparedQuery;
 use rudf::sparql::QueryResult;
-/// 
 
 #[test]
 fn service_test() -> Result<()> {
@@ -22,8 +21,8 @@ fn service_test() -> Result<()> {
       }
     }
   "#;
-  let prepared_query = connection.prepare_query(query, None, Some(NoneService)).unwrap();
-  let results = prepared_query.exec().unwrap();
+  let prepared_query = connection.prepare_query(query, None).unwrap();
+  let results = prepared_query.exec(&None).unwrap();
   if let QueryResult::Bindings(results) = results {
     let collected = results.into_values_iter().collect::<Vec<_>>();
     println!("Results: {:?}", collected);

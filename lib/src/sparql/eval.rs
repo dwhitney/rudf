@@ -331,7 +331,6 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                         input: from,
                         iter,
                         problem_vars,
-                        service_handler,
                     })
                 }
             }
@@ -2144,7 +2143,6 @@ struct BadLeftJoinIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> 
     input: EncodedTuple,
     iter: LeftJoinIterator<'a, S, H>,
     problem_vars: Vec<usize>,
-    service_handler: &'a Option<H>,
 }
 
 impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for BadLeftJoinIterator<'a, S, H> {
