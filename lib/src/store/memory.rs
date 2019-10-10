@@ -60,7 +60,7 @@ struct MemoryStoreIndexes {
     str_store: MemoryStrStore,
 }
 
-impl<'a, H: ServiceHandler + 'a> Repository<H> for &'a MemoryRepository {
+impl<'a> Repository for &'a MemoryRepository {
     type Connection = MemoryRepositoryConnection<'a>;
 
     fn connection(self) -> Result<StoreRepositoryConnection<&'a MemoryStore>> {

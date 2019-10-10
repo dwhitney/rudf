@@ -29,54 +29,46 @@ pub use crate::sparql::model::Variable;
 
 //pub type ServiceHandler<'a> = Option<fn (NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>>;
 
-pub trait ServiceHandler {
+pub trait ServiceHandler : Copy {
     fn handle<'a>(&'a self, node: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
 }
 
-pub struct NoneService;
-
-impl ServiceHandler for NoneService {
-    fn handle<'a>(&'a self, _: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)> {
-        None
-    }
-}
 
 /// A prepared [SPARQL query](https://www.w3.org/TR/sparql11-query/)
 pub trait PreparedQuery {
     /// Evaluates the query and returns its results
-    fn exec(&self) -> Result<QueryResult>;
+    fn exec<'a, H: ServiceHandler + 'a>(&'a self, service_handler: &'a Option<H>) -> Result<QueryResult>;
 }
 
 /// An implementation of `PreparedQuery` for internal use
-pub struct SimplePreparedQuery<S: StoreConnection, H: ServiceHandler>(SimplePreparedQueryOptions<S,H>);
+pub struct SimplePreparedQuery<S: StoreConnection>(SimplePreparedQueryOptions<S>);
 
-enum SimplePreparedQueryOptions<S: StoreConnection, H: ServiceHandler> {
+enum SimplePreparedQueryOptions<S: StoreConnection> {
     Select {
         plan: PlanNode,
         variables: Vec<Variable>,
-        evaluator: SimpleEvaluator<S,H>,
+        evaluator: SimpleEvaluator<S>,
     },
     Ask {
         plan: PlanNode,
-        evaluator: SimpleEvaluator<S,H>,
+        evaluator: SimpleEvaluator<S>,
     },
     Construct {
         plan: PlanNode,
         construct: Vec<TripleTemplate>,
-        evaluator: SimpleEvaluator<S,H>,
+        evaluator: SimpleEvaluator<S>,
     },
     Describe {
         plan: PlanNode,
-        evaluator: SimpleEvaluator<S,H>,
+        evaluator: SimpleEvaluator<S>,
     },
 }
 
-impl<S: StoreConnection, H: ServiceHandler> SimplePreparedQuery<S, H> {
+impl<S: StoreConnection> SimplePreparedQuery<S> {
     pub(crate) fn new<'a>(
         connection: S,
         query: &str,
-        base_iri: Option<&str>,
-        service_handler: Option<H>
+        base_iri: Option<&str>
         ) -> Result<Self> {
         let dataset = DatasetView::new(connection);
         //TODO avoid inserting terms in the Repository StringStore
@@ -90,7 +82,7 @@ impl<S: StoreConnection, H: ServiceHandler> SimplePreparedQuery<S, H> {
                 SimplePreparedQueryOptions::Select {
                     plan,
                     variables,
-                    evaluator: SimpleEvaluator::new(dataset, base_iri, service_handler),
+                    evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
             QueryVariants::Ask {
@@ -101,7 +93,7 @@ impl<S: StoreConnection, H: ServiceHandler> SimplePreparedQuery<S, H> {
                 let (plan, _) = PlanBuilder::build(dataset.encoder(), &algebra)?;
                 SimplePreparedQueryOptions::Ask {
                     plan,
-                    evaluator: SimpleEvaluator::new(dataset, base_iri, service_handler),
+                    evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
             QueryVariants::Construct {
@@ -118,7 +110,7 @@ impl<S: StoreConnection, H: ServiceHandler> SimplePreparedQuery<S, H> {
                         &construct,
                         variables,
                     )?,
-                    evaluator: SimpleEvaluator::new(dataset, base_iri, service_handler),
+                    evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
             QueryVariants::Describe {
@@ -129,31 +121,31 @@ impl<S: StoreConnection, H: ServiceHandler> SimplePreparedQuery<S, H> {
                 let (plan, _) = PlanBuilder::build(dataset.encoder(), &algebra)?;
                 SimplePreparedQueryOptions::Describe {
                     plan,
-                    evaluator: SimpleEvaluator::new(dataset, base_iri, service_handler),
+                    evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
         }))
     }
 }
 
-impl<S: StoreConnection, H: ServiceHandler> PreparedQuery for SimplePreparedQuery<S, H> {
-    fn exec(&self) -> Result<QueryResult<'_>> {
+impl<S: StoreConnection> PreparedQuery for SimplePreparedQuery<S> {
+    fn exec<'a, H: ServiceHandler + 'a>(&'a self, service_handler: &'a Option<H>) -> Result<QueryResult<'_>> {
         match &self.0 {
             SimplePreparedQueryOptions::Select {
                 plan,
                 variables,
                 evaluator,
-            } => evaluator.evaluate_select_plan(&plan, &variables),
+            } => evaluator.evaluate_select_plan(&plan, &variables, service_handler),
             SimplePreparedQueryOptions::Ask { plan, evaluator } => {
-                evaluator.evaluate_ask_plan(&plan)
+                evaluator.evaluate_ask_plan(&plan, service_handler)
             }
             SimplePreparedQueryOptions::Construct {
                 plan,
                 construct,
                 evaluator,
-            } => evaluator.evaluate_construct_plan(&plan, &construct),
+            } => evaluator.evaluate_construct_plan(&plan, &construct, service_handler),
             SimplePreparedQueryOptions::Describe { plan, evaluator } => {
-                evaluator.evaluate_describe_plan(&plan)
+                evaluator.evaluate_describe_plan(&plan, &service_handler)
             }
         }
     }

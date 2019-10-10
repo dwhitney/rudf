@@ -68,16 +68,15 @@ impl<'a, S: StoreConnection + 'a> From<S> for StoreRepositoryConnection<S> {
     }
 }
 
-impl<S: StoreConnection, H: ServiceHandler> RepositoryConnection<H> for StoreRepositoryConnection<S> {
-    type PreparedQuery = SimplePreparedQuery<S,H>;
+impl<S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<S> {
+    type PreparedQuery = SimplePreparedQuery<S>;
 
     fn prepare_query<'a>(
         &'a self,
         query: &str,
-        base_iri: Option<&str>,
-        service_handler: Option<H>
-    ) -> Result<SimplePreparedQuery<S,H>> {
-            SimplePreparedQuery::new(self.inner.clone(), query, base_iri, service_handler) //TODO: avoid clone
+        base_iri: Option<&str>
+    ) -> Result<SimplePreparedQuery<S>> {
+            SimplePreparedQuery::new(self.inner.clone(), query, base_iri) //TODO: avoid clone
     }
 
     fn quads_for_pattern<'a>(

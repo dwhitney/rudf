@@ -1,5 +1,4 @@
 use crate::model::*;
-use crate::sparql::{NoneService,ServiceHandler};
 use crate::sparql::PreparedQuery;
 use crate::{DatasetSyntax, GraphSyntax, Result};
 use std::io::BufRead;
@@ -47,14 +46,14 @@ use std::io::BufRead;
 ///
 /// Quads insertion and deletion should respect [ACID](https://en.wikipedia.org/wiki/ACID) properties for all implementation.
 /// No complex transaction support is provided yet.
-pub trait Repository<H: ServiceHandler> {
-    type Connection: RepositoryConnection<H>;
+pub trait Repository {
+    type Connection: RepositoryConnection;
 
     fn connection(self) -> Result<Self::Connection>;
 }
 
 /// A connection to a `Repository`
-pub trait RepositoryConnection<H: ServiceHandler>: Clone {
+pub trait RepositoryConnection: Clone {
     type PreparedQuery: PreparedQuery;
 
     /// Prepares a [SPARQL 1.1 query](https://www.w3.org/TR/sparql11-query/) and returns an object that could be used to execute it.
@@ -85,8 +84,7 @@ pub trait RepositoryConnection<H: ServiceHandler>: Clone {
     fn prepare_query<'a>(
         &'a self,
         query: &str,
-        base_iri: Option<&str>,
-        service_handler: Option<H>
+        base_iri: Option<&str>
     ) -> Result<Self::PreparedQuery>;
 
     /// Retrieves quads with a filter on each quad component
