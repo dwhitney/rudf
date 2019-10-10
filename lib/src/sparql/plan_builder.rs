@@ -94,6 +94,14 @@ impl<E: Encoder> PlanBuilder<E> {
                 let graph_name = self.pattern_value_from_named_node_or_variable(g, variables)?;
                 self.build_for_graph_pattern(p, variables, graph_name)?
             }
+            GraphPattern::Service(n, p, s) => {
+                println!("n: {:?}", n);
+                PlanNode::Service {
+                    service_name: self.pattern_value_from_named_node_or_variable(n, variables)?,
+                    child: Box::new(self.build_for_graph_pattern(p, variables, graph_name)?),
+                    silent: *s,
+                }
+            },
             GraphPattern::Extend(p, v, e) => PlanNode::Extend {
                 child: Box::new(self.build_for_graph_pattern(p, variables, graph_name)?),
                 position: variable_key(variables, &v),
@@ -103,11 +111,6 @@ impl<E: Encoder> PlanBuilder<E> {
                 left: Box::new(self.build_for_graph_pattern(a, variables, graph_name)?),
                 right: Box::new(self.build_for_graph_pattern(b, variables, graph_name)?),
             },
-            GraphPattern::Service(_n, _p, _s) => {
-                return Err(format_err!(
-                    "SPARQL SERVICE clauses are not implemented yet"
-                ))
-            }
             GraphPattern::AggregateJoin(GroupPattern(key, p), aggregates) => {
                 let mut inner_variables = key.clone();
                 let inner_graph_name =

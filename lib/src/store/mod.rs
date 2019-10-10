@@ -10,7 +10,7 @@ pub use crate::store::memory::MemoryRepository;
 pub use crate::store::rocksdb::RocksDbRepository;
 
 use crate::model::*;
-use crate::sparql::{BindingsIterator,GraphPattern,SimplePreparedQuery};
+use crate::sparql::{ServiceHandler,SimplePreparedQuery};
 use crate::store::numeric_encoder::*;
 use crate::{DatasetSyntax, GraphSyntax, RepositoryConnection, Result};
 use rio_api::parser::{QuadsParser, TriplesParser};
@@ -68,15 +68,15 @@ impl<'a, S: StoreConnection + 'a> From<S> for StoreRepositoryConnection<S> {
     }
 }
 
-impl<S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<S> {
-    type PreparedQuery = SimplePreparedQuery<S>;
+impl<S: StoreConnection, H: ServiceHandler> RepositoryConnection<H> for StoreRepositoryConnection<S> {
+    type PreparedQuery = SimplePreparedQuery<S,H>;
 
     fn prepare_query<'a>(
         &'a self,
         query: &str,
         base_iri: Option<&str>,
-        service_handler: Option<fn (NamedNode) -> (fn(GraphPattern) -> Result<BindingsIterator<'a>>)>
-    ) -> Result<SimplePreparedQuery<S>> {
+        service_handler: Option<H>
+    ) -> Result<SimplePreparedQuery<S,H>> {
             SimplePreparedQuery::new(self.inner.clone(), query, base_iri, service_handler) //TODO: avoid clone
     }
 

@@ -60,7 +60,7 @@ struct MemoryStoreIndexes {
     str_store: MemoryStrStore,
 }
 
-impl<'a> Repository for &'a MemoryRepository {
+impl<'a, H: ServiceHandler + 'a> Repository<H> for &'a MemoryRepository {
     type Connection = MemoryRepositoryConnection<'a>;
 
     fn connection(self) -> Result<StoreRepositoryConnection<&'a MemoryStore>> {
@@ -86,6 +86,7 @@ impl<'a> StrLookup for &'a MemoryStore {
 
 impl<'a> StrContainer for &'a MemoryStore {
     fn insert_str(&mut self, key: u128, value: &str) -> Result<()> {
+        println!("{} -> {}", key, value);
         self.indexes_mut()?.str_store.insert_str(key, value)
     }
 }

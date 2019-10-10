@@ -18,6 +18,7 @@ pub enum PlanNode {
     Service {
         service_name: PatternValue,
         child: Box<PlanNode>,
+        silent: bool,
     },
     QuadPatternJoin {
         child: Box<PlanNode>,
@@ -464,6 +465,7 @@ pub enum TripleTemplateValue {
     BlankNode(usize),
     Variable(usize),
 }
+
 
 pub struct DatasetView<S: StoreConnection> {
     store: S,

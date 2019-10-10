@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use rudf::model::vocab::rdf;
 use rudf::model::vocab::rdfs;
 use rudf::model::*;
-use rudf::sparql::PreparedQuery;
+use rudf::sparql::{PreparedQuery, ServiceHandler};
 use rudf::sparql::{Query, QueryResult, QueryResultSyntax};
 use rudf::{GraphSyntax, MemoryRepository, Repository, RepositoryConnection, Result};
 use std::fmt;

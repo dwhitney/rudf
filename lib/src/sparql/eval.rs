@@ -1,6 +1,6 @@
-use crate::model::{BlankNode, NamedNode};
+use crate::model::{BlankNode};
 use crate::model::Triple;
-use crate::sparql::algebra::GraphPattern;
+use crate::sparql::{NoneService, ServiceHandler};
 use crate::sparql::model::*;
 use crate::sparql::plan::*;
 use crate::store::numeric_encoder::*;
@@ -38,31 +38,34 @@ const REGEX_SIZE_LIMIT: usize = 1_000_000;
 
 type EncodedTuplesIterator<'a> = Box<dyn Iterator<Item = Result<EncodedTuple>> + 'a>;
 
-pub struct SimpleEvaluator<S: StoreConnection> {
+pub struct SimpleEvaluator<S: StoreConnection, H: ServiceHandler = NoneService> 
+{
     dataset: DatasetView<S>,
     bnodes_map: Mutex<BTreeMap<u128, u128>>,
     base_iri: Option<Iri<String>>,
     now: DateTime<FixedOffset>,
+    service_handler: Option<H>,
 }
 
-impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> SimpleEvaluator<S, H> {
     pub fn new<'b>(
         dataset: DatasetView<S>,
         base_iri: Option<Iri<String>>,
-        service_function: Option<fn (NamedNode) -> (fn(GraphPattern) -> Result<BindingsIterator<'b>>)>
+        service_handler: Option<H>
         ) -> Self {
         Self {
             dataset,
             bnodes_map: Mutex::new(BTreeMap::default()),
             base_iri,
             now: Utc::now().with_timezone(&FixedOffset::east(0)),
+            service_handler,
         }
     }
 
     pub fn evaluate_select_plan<'b>(
         &'b self,
         plan: &'b PlanNode,
-        variables: &[Variable],
+        variables: &[Variable]
     ) -> Result<QueryResult<'b>>
     where
         'a: 'b,
@@ -73,7 +76,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         ))
     }
 
-    pub fn evaluate_ask_plan<'b>(&'b self, plan: &'b PlanNode) -> Result<QueryResult<'b>>
+    pub fn evaluate_ask_plan<'b>( &'b self, plan: &'b PlanNode) -> Result<QueryResult<'b>>
     where
         'a: 'b,
     {
@@ -87,7 +90,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     pub fn evaluate_construct_plan<'b>(
         &'b self,
         plan: &'b PlanNode,
-        construct: &'b [TripleTemplate],
+        construct: &'b [TripleTemplate]
     ) -> Result<QueryResult<'b>>
     where
         'a: 'b,
@@ -101,7 +104,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         })))
     }
 
-    pub fn evaluate_describe_plan<'b>(&'b self, plan: &'b PlanNode) -> Result<QueryResult<'b>>
+    pub fn evaluate_describe_plan<'b>( &'b self, plan: &'b PlanNode) -> Result<QueryResult<'b>>
     where
         'a: 'b,
     {
@@ -112,7 +115,11 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         })))
     }
 
-    fn eval_plan<'b>(&'b self, node: &'b PlanNode, from: EncodedTuple) -> EncodedTuplesIterator<'b>
+    fn eval_plan<'b>(
+        &'b self,
+        node: &'b PlanNode,
+        from: EncodedTuple
+    ) -> EncodedTuplesIterator<'b>
     where
         'a: 'b,
     {
@@ -188,8 +195,25 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             PlanNode::Service {
                 service_name,
                 child,
+                silent,
             } => {
-                self.eval_plan(child, from)
+                match &self.service_handler {
+                    None => self.eval_plan(child, from),
+                    Some(handler) => {
+                        let pattern_option = 
+                            get_pattern_value(service_name, &[])
+                                .and_then(move |t| {
+                                    let named_node = self.dataset.decode_named_node(t).unwrap();
+                                    handler.handle(named_node)
+                                });
+                        match pattern_option {
+                            None =>  self.eval_plan(child, from),
+                            Some(pattern_fn) => self.eval_plan(child, from),
+                        }
+                    }
+                }
+                   
+                       
             },
             PlanNode::PathPatternJoin {
                 child,
@@ -677,10 +701,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             .map(|e| e.map(|e| (e, e)))
     }
 
-    fn eval_expression(
-        &self,
-        expression: &PlanExpression,
-        tuple: &[Option<EncodedTerm>],
+    fn eval_expression<'b>(
+        &'b self,
+        expression: &'b PlanExpression,
+        tuple: &'b [Option<EncodedTerm>],
     ) -> Option<EncodedTerm> {
         match expression {
             PlanExpression::Constant(t) => Some(*t),
@@ -1804,13 +1828,13 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         )
     }
 
-    fn hash<H: Digest>(
+    fn hash<D: Digest>(
         &self,
         arg: &PlanExpression,
         tuple: &[Option<EncodedTerm>],
     ) -> Option<EncodedTerm> {
         let input = self.to_simple_string(self.eval_expression(arg, tuple)?)?;
-        let hash = hex::encode(H::new().chain(&input as &str).result());
+        let hash = hex::encode(D::new().chain(&input as &str).result());
         self.build_string_literal(&hash)
     }
 }
@@ -2073,14 +2097,14 @@ impl<'a> Iterator for AntiJoinIterator<'a> {
     }
 }
 
-struct LeftJoinIterator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+struct LeftJoinIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
+    eval: &'a SimpleEvaluator<S,H>,
     right_plan: &'a PlanNode,
     left_iter: EncodedTuplesIterator<'a>,
     current_right: EncodedTuplesIterator<'a>,
 }
 
-impl<'a, S: StoreConnection> Iterator for LeftJoinIterator<'a, S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for LeftJoinIterator<'a, S, H> {
     type Item = Result<EncodedTuple>;
 
     fn next(&mut self) -> Option<Result<EncodedTuple>> {
@@ -2101,13 +2125,13 @@ impl<'a, S: StoreConnection> Iterator for LeftJoinIterator<'a, S> {
     }
 }
 
-struct BadLeftJoinIterator<'a, S: StoreConnection> {
+struct BadLeftJoinIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
     input: EncodedTuple,
-    iter: LeftJoinIterator<'a, S>,
+    iter: LeftJoinIterator<'a, S, H>,
     problem_vars: Vec<usize>,
 }
 
-impl<'a, S: StoreConnection> Iterator for BadLeftJoinIterator<'a, S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for BadLeftJoinIterator<'a, S, H> {
     type Item = Result<EncodedTuple>;
 
     fn next(&mut self) -> Option<Result<EncodedTuple>> {
@@ -2137,15 +2161,15 @@ impl<'a, S: StoreConnection> Iterator for BadLeftJoinIterator<'a, S> {
     }
 }
 
-struct UnionIterator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+struct UnionIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
+    eval: &'a SimpleEvaluator<S, H>,
     plans: &'a [PlanNode],
     input: EncodedTuple,
     current_iterator: EncodedTuplesIterator<'a>,
     current_plan: usize,
 }
 
-impl<'a, S: StoreConnection> Iterator for UnionIterator<'a, S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for UnionIterator<'a, S, H> {
     type Item = Result<EncodedTuple>;
 
     fn next(&mut self) -> Option<Result<EncodedTuple>> {
@@ -2164,15 +2188,15 @@ impl<'a, S: StoreConnection> Iterator for UnionIterator<'a, S> {
     }
 }
 
-struct ConstructIterator<'a, S: StoreConnection> {
-    eval: &'a SimpleEvaluator<S>,
+struct ConstructIterator<'a, S: StoreConnection, H: ServiceHandler> {
+    eval: &'a SimpleEvaluator<S,H>,
     iter: EncodedTuplesIterator<'a>,
     template: &'a [TripleTemplate],
     buffered_results: Vec<Result<Triple>>,
     bnodes: Vec<BlankNode>,
 }
 
-impl<'a, S: StoreConnection> Iterator for ConstructIterator<'a, S> {
+impl<'a, S: StoreConnection, H: ServiceHandler> Iterator for ConstructIterator<'a, S, H> {
     type Item = Result<Triple>;
 
     fn next(&mut self) -> Option<Result<Triple>> {
@@ -2235,13 +2259,13 @@ fn decode_triple(
     ))
 }
 
-struct DescribeIterator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+struct DescribeIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
+    eval: &'a SimpleEvaluator<S,H>,
     iter: EncodedTuplesIterator<'a>,
     quads: Box<dyn Iterator<Item = Result<EncodedQuad>> + 'a>,
 }
 
-impl<'a, S: StoreConnection> Iterator for DescribeIterator<'a, S> {
+impl<'a, S: StoreConnection, H: ServiceHandler> Iterator for DescribeIterator<'a, S, H> {
     type Item = Result<Triple>;
 
     fn next(&mut self) -> Option<Result<Triple>> {
@@ -2525,18 +2549,18 @@ impl Accumulator for AvgAccumulator {
     }
 }
 
-struct MinAccumulator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+struct MinAccumulator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
+    eval: &'a SimpleEvaluator<S,H>,
     min: Option<Option<EncodedTerm>>,
 }
 
-impl<'a, S: StoreConnection + 'a> MinAccumulator<'a, S> {
-    fn new(eval: &'a SimpleEvaluator<S>) -> Self {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> MinAccumulator<'a, S, H> {
+    fn new(eval: &'a SimpleEvaluator<S, H>) -> Self {
         Self { eval, min: None }
     }
 }
 
-impl<'a, S: StoreConnection + 'a> Accumulator for MinAccumulator<'a, S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Accumulator for MinAccumulator<'a, S, H> {
     fn add(&mut self, element: Option<EncodedTerm>) {
         if let Some(min) = self.min {
             if self.eval.cmp_terms(element, min) == Ordering::Less {
@@ -2552,18 +2576,18 @@ impl<'a, S: StoreConnection + 'a> Accumulator for MinAccumulator<'a, S> {
     }
 }
 
-struct MaxAccumulator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+struct MaxAccumulator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
+    eval: &'a SimpleEvaluator<S, H>,
     max: Option<Option<EncodedTerm>>,
 }
 
-impl<'a, S: StoreConnection + 'a> MaxAccumulator<'a, S> {
-    fn new(eval: &'a SimpleEvaluator<S>) -> Self {
+impl<'a, S: StoreConnection + 'a, H : ServiceHandler + 'a> MaxAccumulator<'a, S, H> {
+    fn new(eval: &'a SimpleEvaluator<S, H>) -> Self {
         Self { eval, max: None }
     }
 }
 
-impl<'a, S: StoreConnection + 'a> Accumulator for MaxAccumulator<'a, S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Accumulator for MaxAccumulator<'a, S, H> {
     fn add(&mut self, element: Option<EncodedTerm>) {
         if let Some(max) = self.max {
             if self.eval.cmp_terms(element, max) == Ordering::Greater {
@@ -2596,15 +2620,15 @@ impl Accumulator for SampleAccumulator {
     }
 }
 
-struct GroupConcatAccumulator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+struct GroupConcatAccumulator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
+    eval: &'a SimpleEvaluator<S, H>,
     concat: Option<String>,
     language: Option<Option<u128>>,
     separator: &'a str,
 }
 
-impl<'a, S: StoreConnection + 'a> GroupConcatAccumulator<'a, S> {
-    fn new(eval: &'a SimpleEvaluator<S>, separator: &'a str) -> Self {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> GroupConcatAccumulator<'a, S, H> {
+    fn new(eval: &'a SimpleEvaluator<S,H>, separator: &'a str) -> Self {
         Self {
             eval,
             concat: Some("".to_owned()),
@@ -2614,7 +2638,7 @@ impl<'a, S: StoreConnection + 'a> GroupConcatAccumulator<'a, S> {
     }
 }
 
-impl<'a, S: StoreConnection + 'a> Accumulator for GroupConcatAccumulator<'a, S> {
+impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Accumulator for GroupConcatAccumulator<'a, S, H> {
     fn add(&mut self, element: Option<EncodedTerm>) {
         if let Some(concat) = self.concat.as_mut() {
             let element = if let Some(element) = element {
