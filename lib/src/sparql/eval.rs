@@ -217,11 +217,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                         match pattern_option {
                             None =>  self.eval_plan(child, from, service_handler),
                             Some(pattern_fn) => {
-                                let (variables, iter) = BindingsIterator::destruct(pattern_fn(graph_pattern.clone()).unwrap());
-                                for b in iter {
-                                    println!("binding: {:?}", b);
-                                };
-                                self.eval_plan(child, from, service_handler)
+                                let encoded = self.encode_bindings(pattern_fn(graph_pattern.clone()).unwrap());
+                                let collected = encoded.collect::<Vec<_>>();
+                                let iter = collected.into_iter();
+                                Box::new(iter)
                             },
                         }
                     }
@@ -1614,6 +1613,32 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 Ok(result)
             })),
         )
+    }
+
+    fn encode_bindings<'b>(
+        &'b self,
+        iter: BindingsIterator<'b>,
+    ) -> EncodedTuplesIterator<'b>
+    where
+        'a: 'b,
+    {
+        let mut encoder = self.dataset.encoder();
+        let (variables, iter) = BindingsIterator::destruct(iter);
+        let tuple_size = variables.len();
+        Box::new(iter.map(move |terms| {
+            let mut encoded_terms = vec![None; tuple_size];
+            for (i, term_option) in terms?.into_iter().enumerate() {
+                match term_option {
+                    None => (),
+                    Some(term) => {
+                        if let Ok(encoded) = encoder.encode_term(&term) {
+                            encoded_terms[i] = Some(encoded) 
+                        }
+                    }
+                }
+            }
+            Ok(encoded_terms)
+        }))
     }
 
     #[allow(clippy::float_cmp)]
