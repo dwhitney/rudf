@@ -901,7 +901,7 @@ impl<E: Encoder> PlanBuilder<E> {
     }
 }
 
-fn variable_key(variables: &mut Vec<Variable>, variable: &Variable) -> usize {
+pub fn variable_key(variables: &mut Vec<Variable>, variable: &Variable) -> usize {
     match slice_key(variables, variable) {
         Some(key) => key,
         None => {

@@ -64,15 +64,18 @@ enum SimplePreparedQueryOptions<S: StoreConnection> {
     },
     Ask {
         plan: PlanNode,
+        variables: Vec<Variable>,
         evaluator: SimpleEvaluator<S>,
     },
     Construct {
         plan: PlanNode,
+        variables: Vec<Variable>,
         construct: Vec<TripleTemplate>,
         evaluator: SimpleEvaluator<S>,
     },
     Describe {
         plan: PlanNode,
+        variables: Vec<Variable>,
         evaluator: SimpleEvaluator<S>,
     },
 }
@@ -104,9 +107,10 @@ impl<S: StoreConnection> SimplePreparedQuery<S> {
                 dataset: _,
                 base_iri,
             } => {
-                let (plan, _) = PlanBuilder::build(dataset.encoder(), &algebra)?;
+                let (plan, variables) = PlanBuilder::build(dataset.encoder(), &algebra)?;
                 SimplePreparedQueryOptions::Ask {
                     plan,
+                    variables,
                     evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
@@ -119,6 +123,7 @@ impl<S: StoreConnection> SimplePreparedQuery<S> {
                 let (plan, variables) = PlanBuilder::build(dataset.encoder(), &algebra)?;
                 SimplePreparedQueryOptions::Construct {
                     plan,
+                    variables: variables.clone(),
                     construct: PlanBuilder::build_graph_template(
                         dataset.encoder(),
                         &construct,
@@ -132,9 +137,10 @@ impl<S: StoreConnection> SimplePreparedQuery<S> {
                 dataset: _,
                 base_iri,
             } => {
-                let (plan, _) = PlanBuilder::build(dataset.encoder(), &algebra)?;
+                let (plan, variables) = PlanBuilder::build(dataset.encoder(), &algebra)?;
                 SimplePreparedQueryOptions::Describe {
                     plan,
+                    variables,
                     evaluator: SimpleEvaluator::new(dataset, base_iri),
                 }
             }
@@ -165,16 +171,17 @@ impl<S: StoreConnection> PreparedQuery for SimplePreparedQuery<S> {
                 variables,
                 evaluator,
             } => evaluator.evaluate_select_plan(&plan, &variables, service_handler),
-            SimplePreparedQueryOptions::Ask { plan, evaluator } => {
-                evaluator.evaluate_ask_plan(&plan, service_handler)
+            SimplePreparedQueryOptions::Ask { plan, variables, evaluator } => {
+                evaluator.evaluate_ask_plan(&plan, &variables, service_handler)
             }
             SimplePreparedQueryOptions::Construct {
                 plan,
+                variables,
                 construct,
                 evaluator,
-            } => evaluator.evaluate_construct_plan(&plan, &construct, service_handler),
-            SimplePreparedQueryOptions::Describe { plan, evaluator } => {
-                evaluator.evaluate_describe_plan(&plan, &service_handler)
+            } => evaluator.evaluate_construct_plan(&plan, &construct, &variables, service_handler),
+            SimplePreparedQueryOptions::Describe { plan, variables, evaluator } => {
+                evaluator.evaluate_describe_plan(&plan, &variables, service_handler)
             }
         }
     }

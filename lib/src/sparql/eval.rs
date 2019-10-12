@@ -68,18 +68,22 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     where
         'a: 'b,
     {
-        let iter = self.eval_plan(plan, vec![None; variables.len()], service_handler);
-
+        let iter = self.eval_plan(plan, vec![None; variables.len()], variables, service_handler);
         Ok(QueryResult::Bindings(
             self.decode_bindings(iter, variables.to_vec()),
         ))
     }
 
-    pub fn evaluate_ask_plan<'b, H: ServiceHandler + 'b>( &'b self, plan: &'b PlanNode, service_handler: &'b Option<H>) -> Result<QueryResult<'b>>
+    pub fn evaluate_ask_plan<'b, H: ServiceHandler + 'b>(
+        &'b self,
+        plan: &'b PlanNode,
+        variables: &'b [Variable],
+        service_handler: &'b Option<H>
+    ) -> Result<QueryResult<'b>>
     where
         'a: 'b,
     {
-        match self.eval_plan(plan, vec![], service_handler).next() {
+        match self.eval_plan(plan, vec![], variables, service_handler).next() {
             Some(Ok(_)) => Ok(QueryResult::Boolean(true)),
             Some(Err(error)) => Err(error),
             None => Ok(QueryResult::Boolean(false)),
@@ -90,6 +94,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         &'b self,
         plan: &'b PlanNode,
         construct: &'b [TripleTemplate],
+        variables: &'b [Variable],
         service_handler: &'b Option<H>
     ) -> Result<QueryResult<'b>>
     where
@@ -97,7 +102,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     {
         Ok(QueryResult::Graph(Box::new(ConstructIterator {
             eval: self,
-            iter: self.eval_plan(plan, vec![], service_handler),
+            iter: self.eval_plan(plan, vec![], variables, service_handler),
             template: construct,
             buffered_results: Vec::default(),
             bnodes: Vec::default(),
@@ -107,6 +112,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     pub fn evaluate_describe_plan<'b, H: ServiceHandler + 'b>(
         &'b self,
         plan: &'b PlanNode,
+        variables: &'b [Variable],
         service_handler: &'b Option<H>
     ) -> Result<QueryResult<'b>>
     where
@@ -114,7 +120,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     {
         Ok(QueryResult::Graph(Box::new(DescribeIterator {
             eval: self,
-            iter: self.eval_plan(plan, vec![], service_handler),
+            iter: self.eval_plan(plan, vec![], variables, service_handler),
             quads: Box::new(empty()),
         })))
     }
@@ -123,6 +129,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         &'b self,
         node: &'b PlanNode,
         from: EncodedTuple,
+        variables: &'b [Variable],
         service_handler: &'b Option<H>
     ) -> EncodedTuplesIterator<'b>
     where
@@ -137,7 +144,8 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 predicate,
                 object,
                 graph_name,
-            } => Box::new(self.eval_plan(&*child, from, service_handler).flat_map_ok(move |tuple| {
+            } => Box::new(self.eval_plan(&*child, from, variables, service_handler).flat_map_ok(move |tuple| {
+                
                 let mut iter = self.dataset.quads_for_pattern(
                     get_pattern_value(&subject, &tuple),
                     get_pattern_value(&predicate, &tuple),
@@ -199,15 +207,30 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             })),
             PlanNode::Service {
                 service_name,
-                child,
                 graph_pattern,
                 silent,
+                child,
             } => {
+                
+                self.eval_plan(&*child, from, variables, service_handler);
+
                 match *service_handler {
-                    None => self.eval_plan(child, from, service_handler),
+                    None => if *silent {
+                        return Box::new(vec![].into_iter());
+                    } else {
+                        return Box::new(once(Err(format_err!(
+                            "No handler was supplied to resolve the given service"
+                        )))) as EncodedTuplesIterator<'_>;
+                    },
                     Some(handler) => {
                         let pattern_option = match get_pattern_value(service_name, &[]) {
-                            None => None,
+                            None => if *silent {
+                                        return Box::new(vec![].into_iter());
+                                    } else {
+                                        return Box::new(once(Err(format_err!(
+                                            "The handler supplied was unable to evaluate the given service"
+                                        )))) as EncodedTuplesIterator<'_>;
+                                    },
                             Some(term) => {
                                 let named_node = self.dataset.decode_named_node(term).unwrap();
                                 handler.handle(named_node)
@@ -215,13 +238,26 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                         };
                             
                         match pattern_option {
-                            None =>  self.eval_plan(child, from, service_handler),
+                            None => if *silent {
+                                        return Box::new(vec![].into_iter());
+                                    } else {
+                                        return Box::new(once(Err(format_err!(
+                                            "The handler supplied was unable to produce any result set on the given service"
+                                        )))) as EncodedTuplesIterator<'_>;
+                                    }, 
                             Some(pattern_fn) => {
-                                let encoded = self.encode_bindings(pattern_fn(graph_pattern.clone()).unwrap());
+                                // TODO figure out why I get a runtime error of: 'already mutably borrowed: BorrowError' when the code below is used
+                                // and service_handler is dereferenced
+                                // let encoded = self.encode_bindings(pattern_fn(graph_pattern.clone()).unwrap());
+                                // Box::new(encoded)
+
+                                // TODO: not sure why I need to clone graph_pattern
+                                let bindings = pattern_fn(graph_pattern.clone()).unwrap();
+                                let encoded = self.encode_bindings(variables, bindings);
                                 let collected = encoded.collect::<Vec<_>>();
                                 let iter = collected.into_iter();
                                 Box::new(iter)
-                            },
+                           },
                         }
                     }
                 }
@@ -232,7 +268,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 path,
                 object,
                 graph_name,
-            } => Box::new(self.eval_plan(&*child, from, service_handler).flat_map_ok(move |tuple| {
+            } => Box::new(self.eval_plan(&*child, from, variables, service_handler).flat_map_ok(move |tuple| {
                 let input_subject = get_pattern_value(&subject, &tuple);
                 let input_object = get_pattern_value(&object, &tuple);
                 let input_graph_name =
@@ -290,7 +326,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 //TODO: very dumb implementation
                 let mut errors = Vec::default();
                 let left_values = self
-                    .eval_plan(&*left, from.clone(), service_handler)
+                    .eval_plan(&*left, from.clone(), variables, service_handler)
                     .filter_map(|result| match result {
                         Ok(result) => Some(result),
                         Err(error) => {
@@ -301,18 +337,18 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     .collect::<Vec<_>>();
                 Box::new(JoinIterator {
                     left: left_values,
-                    right_iter: self.eval_plan(&*right, from, service_handler),
+                    right_iter: self.eval_plan(&*right, from, variables, service_handler),
                     buffered_results: errors,
                 })
             }
             PlanNode::AntiJoin { left, right } => {
                 //TODO: dumb implementation
                 let right: Vec<_> = self
-                    .eval_plan(&*right, from.clone(), service_handler)
+                    .eval_plan(&*right, from.clone(), variables, service_handler)
                     .filter_map(|result| result.ok())
                     .collect();
                 Box::new(AntiJoinIterator {
-                    left_iter: self.eval_plan(&*left, from, service_handler),
+                    left_iter: self.eval_plan(&*left, from, variables, service_handler),
                     right,
                 })
             }
@@ -327,9 +363,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 let iter = LeftJoinIterator {
                     eval: self,
                     right_plan: &*right,
-                    left_iter: self.eval_plan(&*left, filtered_from, service_handler),
+                    left_iter: self.eval_plan(&*left, filtered_from, variables, service_handler),
                     current_right: Box::new(empty()),
                     service_handler,
+                    variables,
                 };
                 if problem_vars.is_empty() {
                     Box::new(iter)
@@ -343,10 +380,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             }
             PlanNode::Filter { child, expression } => {
                 let eval = self;
-                Box::new(self.eval_plan(&*child, from, service_handler).filter(move |tuple| {
+                Box::new(self.eval_plan(&*child, from, variables, service_handler).filter(move |tuple| {
                     match tuple {
                         Ok(tuple) => eval
-                            .eval_expression(&expression, tuple, service_handler)
+                            .eval_expression(&expression, tuple, variables, service_handler)
                             .and_then(|term| eval.to_bool(term))
                             .unwrap_or(false),
                         Err(_) => true,
@@ -360,6 +397,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 current_iterator: Box::new(empty()),
                 current_plan: 0,
                 service_handler,
+                variables,
             }),
             PlanNode::Extend {
                 child,
@@ -367,9 +405,9 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 expression,
             } => {
                 let eval = self;
-                Box::new(self.eval_plan(&*child, from, service_handler).map(move |tuple| {
+                Box::new(self.eval_plan(&*child, from, variables, service_handler).map(move |tuple| {
                     let mut tuple = tuple?;
-                    if let Some(value) = eval.eval_expression(&expression, &tuple, service_handler) {
+                    if let Some(value) = eval.eval_expression(&expression, &tuple, variables, service_handler) {
                         put_value(*position, value, &mut tuple)
                     }
                     Ok(tuple)
@@ -378,7 +416,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             PlanNode::Sort { child, by } => {
                 let mut errors = Vec::default();
                 let mut values = self
-                    .eval_plan(&*child, from, service_handler)
+                    .eval_plan(&*child, from, variables, service_handler)
                     .filter_map(|result| match result {
                         Ok(result) => Some(result),
                         Err(error) => {
@@ -391,14 +429,14 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     for comp in by {
                         match comp {
                             Comparator::Asc(expression) => {
-                                match self.cmp_according_to_expression(a, b, &expression, service_handler) {
+                                match self.cmp_according_to_expression(a, b, &expression, variables, service_handler) {
                                     Ordering::Greater => return Ordering::Greater,
                                     Ordering::Less => return Ordering::Less,
                                     Ordering::Equal => (),
                                 }
                             }
                             Comparator::Desc(expression) => {
-                                match self.cmp_according_to_expression(a, b, &expression, service_handler) {
+                                match self.cmp_according_to_expression(a, b, &expression, variables, service_handler) {
                                     Ordering::Greater => return Ordering::Less,
                                     Ordering::Less => return Ordering::Greater,
                                     Ordering::Equal => (),
@@ -411,16 +449,16 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 Box::new(errors.into_iter().chain(values.into_iter().map(Ok)))
             }
             PlanNode::HashDeduplicate { child } => {
-                Box::new(hash_deduplicate(self.eval_plan(&*child, from, service_handler)))
+                Box::new(hash_deduplicate(self.eval_plan(&*child, from, variables, service_handler)))
             }
-            PlanNode::Skip { child, count } => Box::new(self.eval_plan(&*child, from, service_handler).skip(*count)),
+            PlanNode::Skip { child, count } => Box::new(self.eval_plan(&*child, from, variables, service_handler).skip(*count)),
             PlanNode::Limit { child, count } => {
-                Box::new(self.eval_plan(&*child, from, service_handler).take(*count))
+                Box::new(self.eval_plan(&*child, from, variables, service_handler).take(*count))
             }
             PlanNode::Project { child, mapping } => {
                 //TODO: use from somewhere?
                 Box::new(
-                    self.eval_plan(&*child, vec![None; mapping.len()], service_handler)
+                    self.eval_plan(&*child, vec![None; mapping.len()], variables, service_handler)
                         .map(move |tuple| {
                             let tuple = tuple?;
                             let mut output_tuple = vec![None; from.len()];
@@ -442,7 +480,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 let mut errors = Vec::default();
                 let mut accumulators_for_group =
                     HashMap::<Vec<Option<EncodedTerm>>, Vec<Box<dyn Accumulator>>>::default();
-                self.eval_plan(child, from, service_handler)
+                self.eval_plan(child, from, variables, service_handler)
                     .filter_map(|result| match result {
                         Ok(result) => Some(result),
                         Err(error) => {
@@ -474,7 +512,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                                 aggregate
                                     .parameter
                                     .as_ref()
-                                    .and_then(|parameter| self.eval_expression(&parameter, &tuple, service_handler)),
+                                    .and_then(|parameter| self.eval_expression(&parameter, &tuple, variables, service_handler)),
                             );
                         }
                     });
@@ -718,6 +756,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         &'b self,
         expression: &'b PlanExpression,
         tuple: &'b [Option<EncodedTerm>],
+        variables: &'b [Variable],
         service_handler: &'b Option<H>
     ) -> Option<EncodedTerm>
     where
@@ -727,15 +766,15 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             PlanExpression::Constant(t) => Some(*t),
             PlanExpression::Variable(v) => get_tuple_value(*v, tuple),
             PlanExpression::Exists(node) => {
-                Some(self.eval_plan(node, tuple.to_vec(), service_handler).next().is_some().into())
+                Some(self.eval_plan(node, tuple.to_vec(), variables, service_handler).next().is_some().into())
             }
             PlanExpression::Or(a, b) => {
-                match self.eval_expression(a, tuple, service_handler).and_then(|v| self.to_bool(v)) {
+                match self.eval_expression(a, tuple, variables, service_handler).and_then(|v| self.to_bool(v)) {
                     Some(true) => Some(true.into()),
-                    Some(false) => self.eval_expression(b, tuple, service_handler),
+                    Some(false) => self.eval_expression(b, tuple, variables, service_handler),
                     None => {
                         if Some(true)
-                            == self.eval_expression(b, tuple, service_handler).and_then(|v| self.to_bool(v))
+                            == self.eval_expression(b, tuple, variables, service_handler).and_then(|v| self.to_bool(v))
                         {
                             Some(true.into())
                         } else {
@@ -745,13 +784,13 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
             }
             PlanExpression::And(a, b) => match self
-                .eval_expression(a, tuple, service_handler)
+                .eval_expression(a, tuple, variables, service_handler)
                 .and_then(|v| self.to_bool(v))
             {
-                Some(true) => self.eval_expression(b, tuple, service_handler),
+                Some(true) => self.eval_expression(b, tuple, variables, service_handler),
                 Some(false) => Some(false.into()),
                 None => {
-                    if Some(false) == self.eval_expression(b, tuple, service_handler).and_then(|v| self.to_bool(v)) {
+                    if Some(false) == self.eval_expression(b, tuple, variables, service_handler).and_then(|v| self.to_bool(v)) {
                         Some(false.into())
                     } else {
                         None
@@ -759,26 +798,26 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
             },
             PlanExpression::Equal(a, b) => {
-                let a = self.eval_expression(a, tuple, service_handler)?;
-                let b = self.eval_expression(b, tuple, service_handler)?;
+                let a = self.eval_expression(a, tuple, variables, service_handler)?;
+                let b = self.eval_expression(b, tuple, variables, service_handler)?;
                 self.equals(a, b).map(|v| v.into())
             }
             PlanExpression::NotEqual(a, b) => {
-                let a = self.eval_expression(a, tuple, service_handler)?;
-                let b = self.eval_expression(b, tuple, service_handler)?;
+                let a = self.eval_expression(a, tuple, variables, service_handler)?;
+                let b = self.eval_expression(b, tuple, variables, service_handler)?;
                 self.equals(a, b).map(|v| (!v).into())
             }
             PlanExpression::Greater(a, b) => Some(
                 (self.partial_cmp_literals(
-                    self.eval_expression(a, tuple, service_handler)?,
-                    self.eval_expression(b, tuple, service_handler)?,
+                    self.eval_expression(a, tuple, variables, service_handler)?,
+                    self.eval_expression(b, tuple, variables, service_handler)?,
                 )? == Ordering::Greater)
                     .into(),
             ),
             PlanExpression::GreaterOrEq(a, b) => Some(
                 match self.partial_cmp_literals(
-                    self.eval_expression(a, tuple, service_handler)?,
-                    self.eval_expression(b, tuple, service_handler)?,
+                    self.eval_expression(a, tuple, variables, service_handler)?,
+                    self.eval_expression(b, tuple, variables, service_handler)?,
                 )? {
                     Ordering::Greater | Ordering::Equal => true,
                     Ordering::Less => false,
@@ -787,15 +826,15 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             ),
             PlanExpression::Lower(a, b) => Some(
                 (self.partial_cmp_literals(
-                    self.eval_expression(a, tuple, service_handler)?,
-                    self.eval_expression(b, tuple, service_handler)?,
+                    self.eval_expression(a, tuple, variables, service_handler)?,
+                    self.eval_expression(b, tuple, variables, service_handler)?,
                 )? == Ordering::Less)
                     .into(),
             ),
             PlanExpression::LowerOrEq(a, b) => Some(
                 match self.partial_cmp_literals(
-                    self.eval_expression(a, tuple, service_handler)?,
-                    self.eval_expression(b, tuple, service_handler)?,
+                    self.eval_expression(a, tuple, variables, service_handler)?,
+                    self.eval_expression(b, tuple, variables, service_handler)?,
                 )? {
                     Ordering::Less | Ordering::Equal => true,
                     Ordering::Greater => false,
@@ -803,10 +842,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 .into(),
             ),
             PlanExpression::In(e, l) => {
-                let needed = self.eval_expression(e, tuple, service_handler)?;
+                let needed = self.eval_expression(e, tuple, variables, service_handler)?;
                 let mut error = false;
                 for possible in l {
-                    if let Some(possible) = self.eval_expression(possible, tuple, service_handler) {
+                    if let Some(possible) = self.eval_expression(possible, tuple, variables, service_handler) {
                         if Some(true) == self.equals(needed, possible) {
                             return Some(true.into());
                         }
@@ -820,25 +859,25 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     Some(false.into())
                 }
             }
-            PlanExpression::Add(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, service_handler)? {
+            PlanExpression::Add(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, variables, service_handler)? {
                 NumericBinaryOperands::Float(v1, v2) => (v1 + v2).into(),
                 NumericBinaryOperands::Double(v1, v2) => (v1 + v2).into(),
                 NumericBinaryOperands::Integer(v1, v2) => v1.checked_add(v2)?.into(),
                 NumericBinaryOperands::Decimal(v1, v2) => v1.checked_add(v2)?.into(),
             }),
-            PlanExpression::Sub(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, service_handler)? {
+            PlanExpression::Sub(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, variables, service_handler)? {
                 NumericBinaryOperands::Float(v1, v2) => (v1 - v2).into(),
                 NumericBinaryOperands::Double(v1, v2) => (v1 - v2).into(),
                 NumericBinaryOperands::Integer(v1, v2) => v1.checked_sub(v2)?.into(),
                 NumericBinaryOperands::Decimal(v1, v2) => v1.checked_sub(v2)?.into(),
             }),
-            PlanExpression::Mul(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, service_handler)? {
+            PlanExpression::Mul(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, variables, service_handler)? {
                 NumericBinaryOperands::Float(v1, v2) => (v1 * v2).into(),
                 NumericBinaryOperands::Double(v1, v2) => (v1 * v2).into(),
                 NumericBinaryOperands::Integer(v1, v2) => v1.checked_mul(v2)?.into(),
                 NumericBinaryOperands::Decimal(v1, v2) => v1.checked_mul(v2)?.into(),
             }),
-            PlanExpression::Div(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, service_handler)? {
+            PlanExpression::Div(a, b) => Some(match self.parse_numeric_operands(a, b, tuple, variables, service_handler)? {
                 NumericBinaryOperands::Float(v1, v2) => (v1 / v2).into(),
                 NumericBinaryOperands::Double(v1, v2) => (v1 / v2).into(),
                 NumericBinaryOperands::Integer(v1, v2) => Decimal::from_i128(v1)?
@@ -846,14 +885,14 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     .into(),
                 NumericBinaryOperands::Decimal(v1, v2) => v1.checked_div(v2)?.into(),
             }),
-            PlanExpression::UnaryPlus(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::UnaryPlus(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::FloatLiteral(value) => Some((*value).into()),
                 EncodedTerm::DoubleLiteral(value) => Some((*value).into()),
                 EncodedTerm::IntegerLiteral(value) => Some((value).into()),
                 EncodedTerm::DecimalLiteral(value) => Some((value).into()),
                 _ => None,
             },
-            PlanExpression::UnaryMinus(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::UnaryMinus(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::FloatLiteral(value) => Some((-*value).into()),
                 EncodedTerm::DoubleLiteral(value) => Some((-*value).into()),
                 EncodedTerm::IntegerLiteral(value) => Some((-value).into()),
@@ -861,12 +900,12 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 _ => None,
             },
             PlanExpression::UnaryNot(e) => self
-                .to_bool(self.eval_expression(e, tuple, service_handler)?)
+                .to_bool(self.eval_expression(e, tuple, variables, service_handler)?)
                 .map(|v| (!v).into()),
             PlanExpression::Str(e) => Some(EncodedTerm::StringLiteral {
-                value_id: self.to_string_id(self.eval_expression(e, tuple, service_handler)?)?,
+                value_id: self.to_string_id(self.eval_expression(e, tuple, variables, service_handler)?)?,
             }),
-            PlanExpression::Lang(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Lang(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::LangStringLiteral { language_id, .. } => {
                     Some(EncodedTerm::StringLiteral {
                         value_id: language_id,
@@ -877,9 +916,9 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             },
             PlanExpression::LangMatches(language_tag, language_range) => {
                 let language_tag =
-                    self.to_simple_string(self.eval_expression(language_tag, tuple, service_handler)?)?;
+                    self.to_simple_string(self.eval_expression(language_tag, tuple, variables, service_handler)?)?;
                 let language_range =
-                    self.to_simple_string(self.eval_expression(language_range, tuple, service_handler)?)?;
+                    self.to_simple_string(self.eval_expression(language_range, tuple, variables, service_handler)?)?;
                 Some(
                     if &*language_range == "*" {
                         !language_tag.is_empty()
@@ -897,10 +936,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     .into(),
                 )
             }
-            PlanExpression::Datatype(e) => self.eval_expression(e, tuple, service_handler)?.datatype(),
+            PlanExpression::Datatype(e) => self.eval_expression(e, tuple, variables, service_handler)?.datatype(),
             PlanExpression::Bound(v) => Some(has_tuple_value(*v, tuple).into()),
             PlanExpression::IRI(e) => {
-                let iri_id = match self.eval_expression(e, tuple, service_handler)? {
+                let iri_id = match self.eval_expression(e, tuple, variables, service_handler)? {
                     EncodedTerm::NamedNode { iri_id } => Some(iri_id),
                     EncodedTerm::StringLiteral { value_id } => Some(value_id),
                     _ => None,
@@ -916,7 +955,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             PlanExpression::BNode(id) => match id {
                 Some(id) => {
                     if let EncodedTerm::StringLiteral { value_id } =
-                        self.eval_expression(id, tuple, service_handler)?
+                        self.eval_expression(id, tuple, variables, service_handler)?
                     {
                         Some(EncodedTerm::BlankNode {
                             id: *self
@@ -935,28 +974,28 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }),
             },
             PlanExpression::Rand => Some(random::<f64>().into()),
-            PlanExpression::Abs(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Abs(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::IntegerLiteral(value) => Some(value.checked_abs()?.into()),
                 EncodedTerm::DecimalLiteral(value) => Some(value.abs().into()),
                 EncodedTerm::FloatLiteral(value) => Some(value.abs().into()),
                 EncodedTerm::DoubleLiteral(value) => Some(value.abs().into()),
                 _ => None,
             },
-            PlanExpression::Ceil(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Ceil(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::IntegerLiteral(value) => Some(value.into()),
                 EncodedTerm::DecimalLiteral(value) => Some(value.ceil().into()),
                 EncodedTerm::FloatLiteral(value) => Some(value.ceil().into()),
                 EncodedTerm::DoubleLiteral(value) => Some(value.ceil().into()),
                 _ => None,
             },
-            PlanExpression::Floor(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Floor(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::IntegerLiteral(value) => Some(value.into()),
                 EncodedTerm::DecimalLiteral(value) => Some(value.floor().into()),
                 EncodedTerm::FloatLiteral(value) => Some(value.floor().into()),
                 EncodedTerm::DoubleLiteral(value) => Some(value.floor().into()),
                 _ => None,
             },
-            PlanExpression::Round(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Round(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::IntegerLiteral(value) => Some(value.into()),
                 EncodedTerm::DecimalLiteral(value) => Some(
                     value
@@ -972,7 +1011,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 let mut language = None;
                 for e in l {
                     let (value, e_language) =
-                        self.to_string_and_language(self.eval_expression(e, tuple, service_handler)?)?;
+                        self.to_string_and_language(self.eval_expression(e, tuple, variables, service_handler)?)?;
                     if let Some(lang) = language {
                         if lang != e_language {
                             language = Some(None)
@@ -986,17 +1025,17 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             }
             PlanExpression::SubStr(source, starting_loc, length) => {
                 let (source, language) =
-                    self.to_string_and_language(self.eval_expression(source, tuple, service_handler)?)?;
+                    self.to_string_and_language(self.eval_expression(source, tuple, variables, service_handler)?)?;
 
                 let starting_location: usize = if let EncodedTerm::IntegerLiteral(v) =
-                    self.eval_expression(starting_loc, tuple, service_handler)?
+                    self.eval_expression(starting_loc, tuple, variables, service_handler)?
                 {
                     v.try_into().ok()?
                 } else {
                     return None;
                 };
                 let length: Option<usize> = if let Some(length) = length {
-                    if let EncodedTerm::IntegerLiteral(v) = self.eval_expression(length, tuple, service_handler)? {
+                    if let EncodedTerm::IntegerLiteral(v) = self.eval_expression(length, tuple, variables, service_handler)? {
                         Some(v.try_into().ok()?)
                     } else {
                         return None;
@@ -1028,45 +1067,45 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             }
             PlanExpression::StrLen(arg) => Some(
                 (self
-                    .to_string(self.eval_expression(arg, tuple, service_handler)?)?
+                    .to_string(self.eval_expression(arg, tuple, variables, service_handler)?)?
                     .chars()
                     .count() as i128)
                     .into(),
             ),
             PlanExpression::Replace(arg, pattern, replacement, flags) => {
                 let regex = self.compile_pattern(
-                    self.eval_expression(pattern, tuple, service_handler)?,
+                    self.eval_expression(pattern, tuple, variables, service_handler)?,
                     if let Some(flags) = flags {
-                        Some(self.eval_expression(flags, tuple, service_handler)?)
+                        Some(self.eval_expression(flags, tuple, variables, service_handler)?)
                     } else {
                         None
                     },
                 )?;
                 let (text, language) =
-                    self.to_string_and_language(self.eval_expression(arg, tuple, service_handler)?)?;
+                    self.to_string_and_language(self.eval_expression(arg, tuple, variables, service_handler)?)?;
                 let replacement =
-                    self.to_simple_string(self.eval_expression(replacement, tuple, service_handler)?)?;
+                    self.to_simple_string(self.eval_expression(replacement, tuple, variables, service_handler)?)?;
                 self.build_plain_literal(&regex.replace_all(&text, &replacement as &str), language)
             }
             PlanExpression::UCase(e) => {
                 let (value, language) =
-                    self.to_string_and_language(self.eval_expression(e, tuple, service_handler)?)?;
+                    self.to_string_and_language(self.eval_expression(e, tuple, variables, service_handler)?)?;
                 self.build_plain_literal(&value.to_uppercase(), language)
             }
             PlanExpression::LCase(e) => {
                 let (value, language) =
-                    self.to_string_and_language(self.eval_expression(e, tuple, service_handler)?)?;
+                    self.to_string_and_language(self.eval_expression(e, tuple, variables, service_handler)?)?;
                 self.build_plain_literal(&value.to_lowercase(), language)
             }
             PlanExpression::StrStarts(arg1, arg2) => {
                 let (arg1, arg2, _) = self.to_argument_compatible_strings(
-                    self.eval_expression(arg1, tuple, service_handler)?,
-                    self.eval_expression(arg2, tuple, service_handler)?,
+                    self.eval_expression(arg1, tuple, variables, service_handler)?,
+                    self.eval_expression(arg2, tuple, variables, service_handler)?,
                 )?;
                 Some((&arg1).starts_with(&arg2 as &str).into())
             }
             PlanExpression::EncodeForURI(ltrl) => {
-                let ltlr = self.to_string(self.eval_expression(ltrl, tuple, service_handler)?)?;
+                let ltlr = self.to_string(self.eval_expression(ltrl, tuple, variables, service_handler)?)?;
                 let mut result = Vec::with_capacity(ltlr.len());
                 for c in ltlr.bytes() {
                     match c {
@@ -1094,22 +1133,22 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             }
             PlanExpression::StrEnds(arg1, arg2) => {
                 let (arg1, arg2, _) = self.to_argument_compatible_strings(
-                    self.eval_expression(arg1, tuple, service_handler)?,
-                    self.eval_expression(arg2, tuple, service_handler)?,
+                    self.eval_expression(arg1, tuple, variables, service_handler)?,
+                    self.eval_expression(arg2, tuple, variables, service_handler)?,
                 )?;
                 Some((&arg1).ends_with(&arg2 as &str).into())
             }
             PlanExpression::Contains(arg1, arg2) => {
                 let (arg1, arg2, _) = self.to_argument_compatible_strings(
-                    self.eval_expression(arg1, tuple, service_handler)?,
-                    self.eval_expression(arg2, tuple, service_handler)?,
+                    self.eval_expression(arg1, tuple, variables, service_handler)?,
+                    self.eval_expression(arg2, tuple, variables, service_handler)?,
                 )?;
                 Some((&arg1).contains(&arg2 as &str).into())
             }
             PlanExpression::StrBefore(arg1, arg2) => {
                 let (arg1, arg2, language) = self.to_argument_compatible_strings(
-                    self.eval_expression(arg1, tuple, service_handler)?,
-                    self.eval_expression(arg2, tuple, service_handler)?,
+                    self.eval_expression(arg1, tuple, variables, service_handler)?,
+                    self.eval_expression(arg2, tuple, variables, service_handler)?,
                 )?;
                 if let Some(position) = (&arg1).find(&arg2 as &str) {
                     self.build_plain_literal(&arg1[..position], language)
@@ -1119,8 +1158,8 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             }
             PlanExpression::StrAfter(arg1, arg2) => {
                 let (arg1, arg2, language) = self.to_argument_compatible_strings(
-                    self.eval_expression(arg1, tuple, service_handler)?,
-                    self.eval_expression(arg2, tuple, service_handler)?,
+                    self.eval_expression(arg1, tuple, variables, service_handler)?,
+                    self.eval_expression(arg2, tuple, variables, service_handler)?,
                 )?;
                 if let Some(position) = (&arg1).find(&arg2 as &str) {
                     self.build_plain_literal(&arg1[position + arg2.len()..], language)
@@ -1128,40 +1167,40 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     Some(ENCODED_EMPTY_STRING_LITERAL)
                 }
             }
-            PlanExpression::Year(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Year(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::DateLiteral(date) => Some(date.year().into()),
                 EncodedTerm::NaiveDateLiteral(date) => Some(date.year().into()),
                 EncodedTerm::DateTimeLiteral(date_time) => Some(date_time.year().into()),
                 EncodedTerm::NaiveDateTimeLiteral(date_time) => Some(date_time.year().into()),
                 _ => None,
             },
-            PlanExpression::Month(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Month(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::DateLiteral(date) => Some(date.year().into()),
                 EncodedTerm::NaiveDateLiteral(date) => Some(date.month().into()),
                 EncodedTerm::DateTimeLiteral(date_time) => Some(date_time.month().into()),
                 EncodedTerm::NaiveDateTimeLiteral(date_time) => Some(date_time.month().into()),
                 _ => None,
             },
-            PlanExpression::Day(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Day(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::DateLiteral(date) => Some(date.year().into()),
                 EncodedTerm::NaiveDateLiteral(date) => Some(date.day().into()),
                 EncodedTerm::DateTimeLiteral(date_time) => Some(date_time.day().into()),
                 EncodedTerm::NaiveDateTimeLiteral(date_time) => Some(date_time.day().into()),
                 _ => None,
             },
-            PlanExpression::Hours(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Hours(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::NaiveTimeLiteral(time) => Some(time.hour().into()),
                 EncodedTerm::DateTimeLiteral(date_time) => Some(date_time.hour().into()),
                 EncodedTerm::NaiveDateTimeLiteral(date_time) => Some(date_time.hour().into()),
                 _ => None,
             },
-            PlanExpression::Minutes(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Minutes(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::NaiveTimeLiteral(time) => Some(time.minute().into()),
                 EncodedTerm::DateTimeLiteral(date_time) => Some(date_time.minute().into()),
                 EncodedTerm::NaiveDateTimeLiteral(date_time) => Some(date_time.minute().into()),
                 _ => None,
             },
-            PlanExpression::Seconds(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::Seconds(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::NaiveTimeLiteral(time) => Some(
                     (Decimal::new(time.nanosecond().into(), 9) + Decimal::from(time.second()))
                         .into(),
@@ -1179,7 +1218,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 _ => None,
             },
             PlanExpression::Timezone(e) => {
-                let timezone = match self.eval_expression(e, tuple, service_handler)? {
+                let timezone = match self.eval_expression(e, tuple, variables, service_handler)? {
                     EncodedTerm::DateLiteral(date) => date.timezone(),
                     EncodedTerm::DateTimeLiteral(date_time) => date_time.timezone(),
                     _ => return None,
@@ -1213,7 +1252,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 })
             }
             PlanExpression::Tz(e) => {
-                let timezone = match self.eval_expression(e, tuple, service_handler)? {
+                let timezone = match self.eval_expression(e, tuple, variables, service_handler)? {
                     EncodedTerm::DateLiteral(date) => Some(date.timezone()),
                     EncodedTerm::DateTimeLiteral(date_time) => Some(date_time.timezone()),
                     EncodedTerm::NaiveDateLiteral(_)
@@ -1244,38 +1283,38 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     .to_hyphenated()
                     .encode_lower(&mut Uuid::encode_buffer()),
             ),
-            PlanExpression::MD5(arg) => self.hash::<Md5,H>(arg, tuple, service_handler),
-            PlanExpression::SHA1(arg) => self.hash::<Sha1,H>(arg, tuple, service_handler),
-            PlanExpression::SHA256(arg) => self.hash::<Sha256,H>(arg, tuple, service_handler),
-            PlanExpression::SHA384(arg) => self.hash::<Sha384,H>(arg, tuple, service_handler),
-            PlanExpression::SHA512(arg) => self.hash::<Sha512,H>(arg, tuple, service_handler),
+            PlanExpression::MD5(arg) => self.hash::<Md5,H>(arg, tuple, variables, service_handler),
+            PlanExpression::SHA1(arg) => self.hash::<Sha1,H>(arg, tuple, variables, service_handler),
+            PlanExpression::SHA256(arg) => self.hash::<Sha256,H>(arg, tuple, variables, service_handler),
+            PlanExpression::SHA384(arg) => self.hash::<Sha384,H>(arg, tuple, variables, service_handler),
+            PlanExpression::SHA512(arg) => self.hash::<Sha512,H>(arg, tuple, variables, service_handler),
             PlanExpression::Coalesce(l) => {
                 for e in l {
-                    if let Some(result) = self.eval_expression(e, tuple, service_handler) {
+                    if let Some(result) = self.eval_expression(e, tuple, variables, service_handler) {
                         return Some(result);
                     }
                 }
                 None
             }
             PlanExpression::If(a, b, c) => {
-                if self.to_bool(self.eval_expression(a, tuple, service_handler)?)? {
-                    self.eval_expression(b, tuple, service_handler)
+                if self.to_bool(self.eval_expression(a, tuple, variables, service_handler)?)? {
+                    self.eval_expression(b, tuple, variables, service_handler)
                 } else {
-                    self.eval_expression(c, tuple, service_handler)
+                    self.eval_expression(c, tuple, variables, service_handler)
                 }
             }
             PlanExpression::StrLang(lexical_form, lang_tag) => {
                 Some(EncodedTerm::LangStringLiteral {
                     value_id: self
-                        .to_simple_string_id(self.eval_expression(lexical_form, tuple, service_handler)?)?,
+                        .to_simple_string_id(self.eval_expression(lexical_form, tuple, variables, service_handler)?)?,
                     language_id: self
-                        .to_simple_string_id(self.eval_expression(lang_tag, tuple, service_handler)?)?,
+                        .to_simple_string_id(self.eval_expression(lang_tag, tuple, variables, service_handler)?)?,
                 })
             }
             PlanExpression::StrDT(lexical_form, datatype) => {
-                let value = self.to_simple_string(self.eval_expression(lexical_form, tuple, service_handler)?)?;
+                let value = self.to_simple_string(self.eval_expression(lexical_form, tuple, variables, service_handler)?)?;
                 let datatype = if let EncodedTerm::NamedNode { iri_id } =
-                    self.eval_expression(datatype, tuple, service_handler)?
+                    self.eval_expression(datatype, tuple, variables, service_handler)?
                 {
                     self.dataset.get_str(iri_id).ok()?
                 } else {
@@ -1290,19 +1329,19 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     .ok()
             }
             PlanExpression::SameTerm(a, b) => {
-                Some((self.eval_expression(a, tuple, service_handler)? == self.eval_expression(b, tuple, service_handler)?).into())
+                Some((self.eval_expression(a, tuple, variables, service_handler)? == self.eval_expression(b, tuple, variables, service_handler)?).into())
             }
             PlanExpression::IsIRI(e) => {
-                Some(self.eval_expression(e, tuple, service_handler)?.is_named_node().into())
+                Some(self.eval_expression(e, tuple, variables, service_handler)?.is_named_node().into())
             }
             PlanExpression::IsBlank(e) => {
-                Some(self.eval_expression(e, tuple, service_handler)?.is_blank_node().into())
+                Some(self.eval_expression(e, tuple, variables, service_handler)?.is_blank_node().into())
             }
             PlanExpression::IsLiteral(e) => {
-                Some(self.eval_expression(e, tuple, service_handler)?.is_literal().into())
+                Some(self.eval_expression(e, tuple, variables, service_handler)?.is_literal().into())
             }
             PlanExpression::IsNumeric(e) => Some(
-                match self.eval_expression(e, tuple, service_handler)? {
+                match self.eval_expression(e, tuple, variables, service_handler)? {
                     EncodedTerm::FloatLiteral(_)
                     | EncodedTerm::DoubleLiteral(_)
                     | EncodedTerm::IntegerLiteral(_)
@@ -1313,24 +1352,24 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             ),
             PlanExpression::Regex(text, pattern, flags) => {
                 let regex = self.compile_pattern(
-                    self.eval_expression(pattern, tuple, service_handler)?,
+                    self.eval_expression(pattern, tuple, variables, service_handler)?,
                     if let Some(flags) = flags {
-                        Some(self.eval_expression(flags, tuple, service_handler)?)
+                        Some(self.eval_expression(flags, tuple, variables, service_handler)?)
                     } else {
                         None
                     },
                 )?;
-                let text = self.to_string(self.eval_expression(text, tuple, service_handler)?)?;
+                let text = self.to_string(self.eval_expression(text, tuple, variables, service_handler)?)?;
                 Some(regex.is_match(&text).into())
             }
-            PlanExpression::BooleanCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::BooleanCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::BooleanLiteral(value) => Some(value.into()),
                 EncodedTerm::StringLiteral { value_id } => {
                     parse_boolean_str(&*self.dataset.get_str(value_id).ok()??)
                 }
                 _ => None,
             },
-            PlanExpression::DoubleCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::DoubleCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::FloatLiteral(value) => Some(value.to_f64()?.into()),
                 EncodedTerm::DoubleLiteral(value) => Some(value.to_f64()?.into()),
                 EncodedTerm::IntegerLiteral(value) => Some(value.to_f64()?.into()),
@@ -1343,7 +1382,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
                 _ => None,
             },
-            PlanExpression::FloatCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::FloatCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::FloatLiteral(value) => Some(value.to_f32()?.into()),
                 EncodedTerm::DoubleLiteral(value) => Some(value.to_f32()?.into()),
                 EncodedTerm::IntegerLiteral(value) => Some(value.to_f32()?.into()),
@@ -1356,7 +1395,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
                 _ => None,
             },
-            PlanExpression::IntegerCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::IntegerCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::FloatLiteral(value) => Some(value.to_i128()?.into()),
                 EncodedTerm::DoubleLiteral(value) => Some(value.to_i128()?.into()),
                 EncodedTerm::IntegerLiteral(value) => Some(value.to_i128()?.into()),
@@ -1367,7 +1406,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
                 _ => None,
             },
-            PlanExpression::DecimalCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::DecimalCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::FloatLiteral(value) => Some(Decimal::from_f32(*value)?.into()),
                 EncodedTerm::DoubleLiteral(value) => Some(Decimal::from_f64(*value)?.into()),
                 EncodedTerm::IntegerLiteral(value) => Some(Decimal::from_i128(value)?.into()),
@@ -1385,7 +1424,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
                 _ => None,
             },
-            PlanExpression::DateCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::DateCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::DateLiteral(value) => Some(value.into()),
                 EncodedTerm::NaiveDateLiteral(value) => Some(value.into()),
                 EncodedTerm::DateTimeLiteral(value) => Some(value.date().into()),
@@ -1395,7 +1434,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
                 _ => None,
             },
-            PlanExpression::TimeCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::TimeCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::NaiveTimeLiteral(value) => Some(value.into()),
                 EncodedTerm::DateTimeLiteral(value) => Some(value.time().into()),
                 EncodedTerm::NaiveDateTimeLiteral(value) => Some(value.time().into()),
@@ -1404,7 +1443,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }
                 _ => None,
             },
-            PlanExpression::DateTimeCast(e) => match self.eval_expression(e, tuple, service_handler)? {
+            PlanExpression::DateTimeCast(e) => match self.eval_expression(e, tuple, variables, service_handler)? {
                 EncodedTerm::DateTimeLiteral(value) => Some(value.into()),
                 EncodedTerm::NaiveDateTimeLiteral(value) => Some(value.into()),
                 EncodedTerm::StringLiteral { value_id } => {
@@ -1413,7 +1452,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 _ => None,
             },
             PlanExpression::StringCast(e) => Some(EncodedTerm::StringLiteral {
-                value_id: self.to_string_id(self.eval_expression(e, tuple, service_handler)?)?,
+                value_id: self.to_string_id(self.eval_expression(e, tuple, variables, service_handler)?)?,
             }),
         }
     }
@@ -1583,11 +1622,12 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         e1: &PlanExpression,
         e2: &PlanExpression,
         tuple: &[Option<EncodedTerm>],
+        variables: &'a [Variable],
         service_handler: &'b Option<H>
     ) -> Option<NumericBinaryOperands> {
         NumericBinaryOperands::new(
-            self.eval_expression(&e1, tuple, service_handler)?,
-            self.eval_expression(&e2, tuple, service_handler)?,
+            self.eval_expression(&e1, tuple, variables, service_handler)?,
+            self.eval_expression(&e2, tuple, variables, service_handler)?,
         )
     }
 
@@ -1617,22 +1657,26 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
 
     fn encode_bindings<'b>(
         &'b self,
+        variables: &'b [Variable],
         iter: BindingsIterator<'b>,
     ) -> EncodedTuplesIterator<'b>
     where
         'a: 'b,
     {
         let mut encoder = self.dataset.encoder();
-        let (variables, iter) = BindingsIterator::destruct(iter);
-        let tuple_size = variables.len();
+        let (binding_variables, iter) = BindingsIterator::destruct(iter);
+        println!("binding_variables: {:?}", binding_variables.clone());
+        println!("variables: {:?}", variables.clone());
+        println!("\n\n");
         Box::new(iter.map(move |terms| {
-            let mut encoded_terms = vec![None; tuple_size];
+            let mut encoded_terms = vec![None; variables.len()];
             for (i, term_option) in terms?.into_iter().enumerate() {
                 match term_option {
                     None => (),
                     Some(term) => {
                         if let Ok(encoded) = encoder.encode_term(&term) {
-                            encoded_terms[i] = Some(encoded) 
+                            let variable = binding_variables[i].clone();
+                            put_variable_value(&variable, variables, encoded, &mut encoded_terms)
                         }
                     }
                 }
@@ -1758,11 +1802,12 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         tuple_a: &[Option<EncodedTerm>],
         tuple_b: &[Option<EncodedTerm>],
         expression: &PlanExpression,
+        variables: &'a [Variable],
         service_handler: &Option<H>
     ) -> Ordering {
         self.cmp_terms(
-            self.eval_expression(expression, tuple_a, service_handler),
-            self.eval_expression(expression, tuple_b, service_handler),
+            self.eval_expression(expression, tuple_a, variables, service_handler),
+            self.eval_expression(expression, tuple_b, variables, service_handler),
         )
     }
 
@@ -1877,9 +1922,10 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
         &self,
         arg: &PlanExpression,
         tuple: &[Option<EncodedTerm>],
+        variables: &'a [Variable],
         service_handler: &Option<H>
     ) -> Option<EncodedTerm> {
-        let input = self.to_simple_string(self.eval_expression(arg, tuple, service_handler)?)?;
+        let input = self.to_simple_string(self.eval_expression(arg, tuple, variables, service_handler)?)?;
         let hash = hex::encode(D::new().chain(&input as &str).result());
         self.build_string_literal(&hash)
     }
@@ -2012,6 +2058,16 @@ fn put_pattern_value(selector: &PatternValue, value: EncodedTerm, tuple: &mut En
     match selector {
         PatternValue::Constant(_) => (),
         PatternValue::Variable(v) => put_value(*v, value, tuple),
+    }
+}
+
+
+fn put_variable_value(selector: &Variable, variables: &[Variable], value: EncodedTerm, tuple: &mut EncodedTuple) {
+    for (i, v) in variables.iter().enumerate() {
+        if selector == v {
+            put_value(i, value, tuple);
+            break;
+        }
     }
 }
 
@@ -2148,7 +2204,8 @@ struct LeftJoinIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
     right_plan: &'a PlanNode,
     left_iter: EncodedTuplesIterator<'a>,
     current_right: EncodedTuplesIterator<'a>,
-    service_handler: &'a Option<H>
+    service_handler: &'a Option<H>,
+    variables: &'a [Variable],
 }
 
 impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for LeftJoinIterator<'a, S, H> {
@@ -2160,7 +2217,7 @@ impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for LeftJoinI
         }
         match self.left_iter.next()? {
             Ok(left_tuple) => {
-                self.current_right = self.eval.eval_plan(self.right_plan, left_tuple.clone(), self.service_handler);
+                self.current_right = self.eval.eval_plan(self.right_plan, left_tuple.clone(), self.variables, self.service_handler);
                 if let Some(right_tuple) = self.current_right.next() {
                     Some(right_tuple)
                 } else {
@@ -2215,6 +2272,7 @@ struct UnionIterator<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> {
     current_iterator: EncodedTuplesIterator<'a>,
     current_plan: usize,
     service_handler: &'a Option<H>,
+    variables: &'a [Variable],
 }
 
 impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for UnionIterator<'a, S, H> {
@@ -2230,7 +2288,7 @@ impl<'a, S: StoreConnection + 'a, H: ServiceHandler + 'a> Iterator for UnionIter
             }
             self.current_iterator = self
                 .eval
-                .eval_plan(&self.plans[self.current_plan], self.input.clone(), self.service_handler);
+                .eval_plan(&self.plans[self.current_plan], self.input.clone(), self.variables, self.service_handler);
             self.current_plan += 1;
         }
     }
