@@ -6,11 +6,11 @@ fn prefix_bug_test() {
   let repository = MemoryRepository::default();
   let mut connection = repository.connection().unwrap();
   let ttl = br#"
-   <http://example.com/bob> <http://xmlns.com/foaf/0.1/name> "Bob" <http://service1.org> .
-   <http://example.com/alice> <http://xmlns.com/foaf/0.1/name> "Alice" <http://service1.org>.
+   <http://example.com/bob> <http://xmlns.com/foaf/0.1/name> "Bob" .
+   <http://example.com/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
 
-   <http://example.com/bob> <http://xmlns.com/foaf/0.1/mbox> <mailto:bob@example.org> <http://service2.org> .
-   <http://example.com/alice> <http://xmlns.com/foaf/0.1/mbox> <mailto:alice@example.org> <http://service2.org> .
+   <http://example.com/bob> <http://xmlns.com/foaf/0.1/mbox> <mailto:bob@example.org>  .
+   <http://example.com/alice> <http://xmlns.com/foaf/0.1/mbox> <mailto:alice@example.org> .
   "#;
   connection.load_dataset(ttl.as_ref(), DatasetSyntax::NQuads, None).unwrap();
 
@@ -19,12 +19,8 @@ fn prefix_bug_test() {
     SELECT ?name ?mbox
     WHERE
       { 
-        GRAPH <http://service1.org>
-        { ?s <foaf:name> ?name 
-        }
-        GRAPH <http://service2.org>
-        { ?s <foaf:mbox> ?mbox 
-        }
+        ?s <foaf:name> ?name .
+        ?s <foaf:mbox> ?mbox .
       }
     "#;
 
@@ -33,12 +29,8 @@ fn prefix_bug_test() {
     SELECT ?name ?mbox
     WHERE
       { 
-        GRAPH <http://service1.org>
-        { ?s <http://xmlns.com/foaf/0.1/name> ?name 
-        }
-        GRAPH <http://service2.org>
-        { ?s <http://xmlns.com/foaf/0.1/mbox> ?mbox 
-        }
+        ?s <http://xmlns.com/foaf/0.1/name> ?name .
+        ?s <http://xmlns.com/foaf/0.1/mbox> ?mbox .
       }
     "#;
 
