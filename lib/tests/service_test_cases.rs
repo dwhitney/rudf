@@ -15,6 +15,10 @@ fn mailto(id: String) -> Term {
   Term::NamedNode(NamedNode::parse(format!("mailto:{}", &id)).unwrap())
 }
 
+fn literal(str: String) -> Term {
+  Term::Literal(Literal::new_simple_literal(str))
+}
+
 #[derive(Clone,Copy)]
 struct SimpleServiceTest;
 impl ServiceHandler for SimpleServiceTest {
@@ -153,13 +157,14 @@ fn two_service_test() {
   WHERE
     { 
       SERVICE <http://service1.org>
-      { ?s <http://xmlns.com/foaf/0.1/name> ?name
+      { ?s foaf:name ?name
       }
 
       SERVICE <http://service2.org>
-      { ?s <http://xmlns.com/foaf/0.1/mbox> ?mbox
+      { ?s foaf:mbox ?mbox
       }
     }
+  ORDER BY ?name
   "#;
 
   let prepared_query = connection.prepare_query(query, None).unwrap();
@@ -172,8 +177,8 @@ fn two_service_test() {
     }
     println!("\n\n\n");
     let solution = vec![
-      vec![ Some(ex("bob".to_string())), Some(mailto("bob@example.com".to_string())) ],
-      vec![ Some(ex("alice".to_string())), Some(mailto("alice@example.com".to_string())) ],
+      vec![ Some(literal("Alice".to_string())), Some(mailto("alice@example.com".to_string())) ],
+      vec![ Some(literal("Bob".to_string())), Some(mailto("bob@example.com".to_string())) ],
     ];
     println!("Results: {:?}", collected);
     assert_eq!(collected, solution);

@@ -212,8 +212,6 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 child,
             } => {
                 
-                self.eval_plan(&*child, from, variables, service_handler);
-
                 match *service_handler {
                     None => if *silent {
                         return Box::new(vec![].into_iter());
@@ -253,10 +251,17 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
 
                                 // TODO: not sure why I need to clone graph_pattern
                                 let bindings = pattern_fn(graph_pattern.clone()).unwrap();
+                                println!("from: {:?}", from);
                                 let encoded = self.encode_bindings(variables, bindings);
                                 let collected = encoded.collect::<Vec<_>>();
-                                let iter = collected.into_iter();
-                                Box::new(iter)
+                                //let combined = combine_tuples(vec![from], collected);
+                                //let iter = combined.into_iter();
+                                //Box::new(iter)
+                                Box::new(JoinIterator {
+                                    left: vec![from],
+                                    right_iter: Box::new(collected.into_iter()),
+                                    buffered_results: vec![],
+                                })
                            },
                         }
                     }
@@ -1665,18 +1670,26 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     {
         let mut encoder = self.dataset.encoder();
         let (binding_variables, iter) = BindingsIterator::destruct(iter);
+        let mut combined_variables = variables.clone().to_vec();
+        for v in binding_variables.clone() {
+            if !combined_variables.contains(&v) {
+                combined_variables.resize(combined_variables.len() + 1, v);
+            }
+        }
+
         println!("binding_variables: {:?}", binding_variables.clone());
         println!("variables: {:?}", variables.clone());
+        println!("combined_variables: {:?}", combined_variables.clone());
         println!("\n\n");
         Box::new(iter.map(move |terms| {
-            let mut encoded_terms = vec![None; variables.len()];
+            let mut encoded_terms = vec![None; combined_variables.len()];
             for (i, term_option) in terms?.into_iter().enumerate() {
                 match term_option {
                     None => (),
                     Some(term) => {
                         if let Ok(encoded) = encoder.encode_term(&term) {
                             let variable = binding_variables[i].clone();
-                            put_variable_value(&variable, variables, encoded, &mut encoded_terms)
+                            put_variable_value(&variable, &combined_variables, encoded, &mut encoded_terms)
                         }
                     }
                 }
