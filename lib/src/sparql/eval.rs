@@ -1,6 +1,6 @@
-use crate::model::{BlankNode, NamedNode};
+use crate::model::{BlankNode};
 use crate::model::Triple;
-use crate::sparql::algebra::GraphPattern;
+use crate::sparql::ServiceHandler;
 use crate::sparql::model::*;
 use crate::sparql::plan::*;
 use crate::store::numeric_encoder::*;
@@ -38,7 +38,6 @@ const REGEX_SIZE_LIMIT: usize = 1_000_000;
 
 type EncodedTuplesIterator<'a> = Box<dyn Iterator<Item = Result<EncodedTuple>> + 'a>;
 
-type ServiceHandler<'a> = fn(node: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
 
 pub struct SimpleEvaluator<'a, S: StoreConnection> {
     dataset: DatasetView<S>,
@@ -49,13 +48,13 @@ pub struct SimpleEvaluator<'a, S: StoreConnection> {
 }
 
 impl<'a, S: StoreConnection + 'a> SimpleEvaluator<'a, S> {
-    pub fn new(dataset: DatasetView<S>, base_iri: Option<Iri<String>>) -> Self {
+    pub fn new(dataset: DatasetView<S>, base_iri: Option<Iri<String>>, service_handler: Option<ServiceHandler<'a>>) -> Self {
         Self {
             dataset,
             bnodes_map: Mutex::new(BTreeMap::default()),
             base_iri,
             now: Utc::now().with_timezone(&FixedOffset::east(0)),
-            service_handler: None,
+            service_handler,
         }
     }
 

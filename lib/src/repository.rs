@@ -1,5 +1,5 @@
 use crate::model::*;
-use crate::sparql::PreparedQuery;
+use crate::sparql::{PreparedQuery,ServiceHandler};
 use crate::{DatasetSyntax, GraphSyntax, Result};
 use std::io::BufRead;
 
@@ -81,7 +81,7 @@ pub trait RepositoryConnection<'a>: Clone {
     ///     assert_eq!(results.into_values_iter().next().unwrap().unwrap()[0], Some(ex.into()));
     /// }
     /// ```
-    fn prepare_query<'b>(&'a self, query: &str, base_iri: Option<&str>) -> Result<Self::PreparedQuery>;
+    fn prepare_query<'b>(&'a self, query: &str, base_iri: Option<&str>, service_handler: Option<ServiceHandler<'a>>) -> Result<Self::PreparedQuery>;
 
     /// Retrieves quads with a filter on each quad component
     ///
