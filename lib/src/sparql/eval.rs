@@ -1,5 +1,6 @@
-use crate::model::BlankNode;
+use crate::model::{BlankNode, NamedNode};
 use crate::model::Triple;
+use crate::sparql::algebra::GraphPattern;
 use crate::sparql::model::*;
 use crate::sparql::plan::*;
 use crate::store::numeric_encoder::*;
@@ -37,20 +38,24 @@ const REGEX_SIZE_LIMIT: usize = 1_000_000;
 
 type EncodedTuplesIterator<'a> = Box<dyn Iterator<Item = Result<EncodedTuple>> + 'a>;
 
-pub struct SimpleEvaluator<S: StoreConnection> {
+type ServiceHandler<'a> = fn(node: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
+
+pub struct SimpleEvaluator<'a, S: StoreConnection> {
     dataset: DatasetView<S>,
     bnodes_map: Mutex<BTreeMap<u128, u128>>,
     base_iri: Option<Iri<String>>,
     now: DateTime<FixedOffset>,
+    service_handler: Option<ServiceHandler<'a>>,
 }
 
-impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
+impl<'a, S: StoreConnection + 'a> SimpleEvaluator<'a, S> {
     pub fn new(dataset: DatasetView<S>, base_iri: Option<Iri<String>>) -> Self {
         Self {
             dataset,
             bnodes_map: Mutex::new(BTreeMap::default()),
             base_iri,
             now: Utc::now().with_timezone(&FixedOffset::east(0)),
+            service_handler: None,
         }
     }
 
@@ -108,7 +113,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
     }
 
     fn eval_plan<'b>(&'b self, node: &'b PlanNode, from: EncodedTuple) -> EncodedTuplesIterator<'b>
-    where
+    where 
         'a: 'b,
     {
         match node {
@@ -2063,7 +2068,7 @@ impl<'a> Iterator for AntiJoinIterator<'a> {
 }
 
 struct LeftJoinIterator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     right_plan: &'a PlanNode,
     left_iter: EncodedTuplesIterator<'a>,
     current_right: EncodedTuplesIterator<'a>,
@@ -2127,7 +2132,7 @@ impl<'a, S: StoreConnection> Iterator for BadLeftJoinIterator<'a, S> {
 }
 
 struct UnionIterator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     plans: &'a [PlanNode],
     input: EncodedTuple,
     current_iterator: EncodedTuplesIterator<'a>,
@@ -2154,7 +2159,7 @@ impl<'a, S: StoreConnection> Iterator for UnionIterator<'a, S> {
 }
 
 struct ConstructIterator<'a, S: StoreConnection> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     iter: EncodedTuplesIterator<'a>,
     template: &'a [TripleTemplate],
     buffered_results: Vec<Result<Triple>>,
@@ -2225,7 +2230,7 @@ fn decode_triple(
 }
 
 struct DescribeIterator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     iter: EncodedTuplesIterator<'a>,
     quads: Box<dyn Iterator<Item = Result<EncodedQuad>> + 'a>,
 }
@@ -2515,7 +2520,7 @@ impl Accumulator for AvgAccumulator {
 }
 
 struct MinAccumulator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     min: Option<Option<EncodedTerm>>,
 }
 
@@ -2542,7 +2547,7 @@ impl<'a, S: StoreConnection + 'a> Accumulator for MinAccumulator<'a, S> {
 }
 
 struct MaxAccumulator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     max: Option<Option<EncodedTerm>>,
 }
 
@@ -2586,7 +2591,7 @@ impl Accumulator for SampleAccumulator {
 }
 
 struct GroupConcatAccumulator<'a, S: StoreConnection + 'a> {
-    eval: &'a SimpleEvaluator<S>,
+    eval: &'a SimpleEvaluator<'a, S>,
     concat: Option<String>,
     language: Option<Option<u128>>,
     separator: &'a str,

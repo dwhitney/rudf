@@ -31,30 +31,30 @@ pub trait PreparedQuery {
 }
 
 /// An implementation of `PreparedQuery` for internal use
-pub struct SimplePreparedQuery<S: StoreConnection>(SimplePreparedQueryOptions<S>);
+pub struct SimplePreparedQuery<'a, S: StoreConnection>(SimplePreparedQueryOptions<'a, S>);
 
-enum SimplePreparedQueryOptions<S: StoreConnection> {
+enum SimplePreparedQueryOptions<'a, S: StoreConnection> {
     Select {
         plan: PlanNode,
         variables: Vec<Variable>,
-        evaluator: SimpleEvaluator<S>,
+        evaluator: SimpleEvaluator<'a, S>,
     },
     Ask {
         plan: PlanNode,
-        evaluator: SimpleEvaluator<S>,
+        evaluator: SimpleEvaluator<'a, S>,
     },
     Construct {
         plan: PlanNode,
         construct: Vec<TripleTemplate>,
-        evaluator: SimpleEvaluator<S>,
+        evaluator: SimpleEvaluator<'a, S>,
     },
     Describe {
         plan: PlanNode,
-        evaluator: SimpleEvaluator<S>,
+        evaluator: SimpleEvaluator<'a, S>,
     },
 }
 
-impl<S: StoreConnection> SimplePreparedQuery<S> {
+impl<'a, S: StoreConnection + 'a> SimplePreparedQuery<'a, S> {
     pub(crate) fn new(connection: S, query: &str, base_iri: Option<&str>) -> Result<Self> {
         let dataset = DatasetView::new(connection);
         //TODO avoid inserting terms in the Repository StringStore
@@ -114,7 +114,7 @@ impl<S: StoreConnection> SimplePreparedQuery<S> {
     }
 }
 
-impl<S: StoreConnection> PreparedQuery for SimplePreparedQuery<S> {
+impl<'a, S: StoreConnection + 'a> PreparedQuery for SimplePreparedQuery<'a, S> {
     fn exec(&self) -> Result<QueryResult<'_>> {
         match &self.0 {
             SimplePreparedQueryOptions::Select {

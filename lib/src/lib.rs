@@ -33,7 +33,6 @@
 //!     assert_eq!(results.into_values_iter().next().unwrap().unwrap()[0], Some(ex.into()));
 //! }
 //! ```
-
 pub mod model;
 mod repository;
 pub mod sparql;

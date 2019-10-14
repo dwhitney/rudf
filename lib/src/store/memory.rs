@@ -40,7 +40,7 @@ pub struct MemoryRepository {
     inner: MemoryStore,
 }
 
-pub type MemoryRepositoryConnection<'a> = StoreRepositoryConnection<&'a MemoryStore>;
+pub type MemoryRepositoryConnection<'a> = StoreRepositoryConnection<'a, &'a MemoryStore>;
 type TripleMap<T> = BTreeMap<T, BTreeMap<T, BTreeSet<T>>>;
 type QuadMap<T> = BTreeMap<T, TripleMap<T>>;
 
@@ -63,7 +63,7 @@ struct MemoryStoreIndexes {
 impl<'a> Repository for &'a MemoryRepository {
     type Connection = MemoryRepositoryConnection<'a>;
 
-    fn connection(self) -> Result<StoreRepositoryConnection<&'a MemoryStore>> {
+    fn connection(self) -> Result<StoreRepositoryConnection<'a, &'a MemoryStore>> {
         Ok(self.inner.connection()?.into())
     }
 }

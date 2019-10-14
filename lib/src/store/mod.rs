@@ -58,32 +58,33 @@ pub trait StoreTransaction: StrContainer + Sized {
 
 /// A `RepositoryConnection` from a `StoreConnection`
 #[derive(Clone)]
-pub struct StoreRepositoryConnection<S: StoreConnection> {
+pub struct StoreRepositoryConnection<'a, S: StoreConnection> {
     inner: S,
+    phantom: std::marker::PhantomData<&'a S>,
 }
 
-impl<S: StoreConnection> From<S> for StoreRepositoryConnection<S> {
+impl<'a, S: StoreConnection> From<S> for StoreRepositoryConnection<'a, S> {
     fn from(inner: S) -> Self {
-        Self { inner }
+        Self { inner, phantom: std::marker::PhantomData, }
     }
 }
 
-impl<S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<S> {
-    type PreparedQuery = SimplePreparedQuery<S>;
+impl<'a, S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<'a, S> {
+    type PreparedQuery = SimplePreparedQuery<'a, S>;
 
-    fn prepare_query(&self, query: &str, base_iri: Option<&str>) -> Result<SimplePreparedQuery<S>> {
+    fn prepare_query(&self, query: &str, base_iri: Option<&str>) -> Result<SimplePreparedQuery<'a, S>> {
         SimplePreparedQuery::new(self.inner.clone(), query, base_iri) //TODO: avoid clone
     }
 
-    fn quads_for_pattern<'a>(
-        &'a self,
+    fn quads_for_pattern<'b>(
+        &'b self,
         subject: Option<&NamedOrBlankNode>,
         predicate: Option<&NamedNode>,
         object: Option<&Term>,
         graph_name: Option<Option<&NamedOrBlankNode>>,
-    ) -> Box<dyn Iterator<Item = Result<Quad>> + 'a>
+    ) -> Box<dyn Iterator<Item = Result<Quad>> + 'b>
     where
-        Self: 'a,
+        Self: 'b
     {
         let subject = subject.map(|s| s.into());
         let predicate = predicate.map(|p| p.into());
@@ -149,7 +150,7 @@ impl<S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<S> {
     }
 }
 
-impl<S: StoreConnection> StoreRepositoryConnection<S> {
+impl<'a, S: StoreConnection> StoreRepositoryConnection<'a, S> {
     fn load_from_triple_parser<P: TriplesParser>(
         &mut self,
         mut parser: P,
