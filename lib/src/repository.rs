@@ -46,15 +46,15 @@ use std::io::BufRead;
 ///
 /// Quads insertion and deletion should respect [ACID](https://en.wikipedia.org/wiki/ACID) properties for all implementation.
 /// No complex transaction support is provided yet.
-pub trait Repository {
-    type Connection: RepositoryConnection;
+pub trait Repository<'a> {
+    type Connection: RepositoryConnection<'a>;
 
     fn connection(self) -> Result<Self::Connection>;
 }
 
 /// A connection to a `Repository`
-pub trait RepositoryConnection: Clone {
-    type PreparedQuery: PreparedQuery;
+pub trait RepositoryConnection<'a>: Clone {
+    type PreparedQuery: PreparedQuery<'a>;
 
     /// Prepares a [SPARQL 1.1 query](https://www.w3.org/TR/sparql11-query/) and returns an object that could be used to execute it.
     ///
@@ -81,7 +81,7 @@ pub trait RepositoryConnection: Clone {
     ///     assert_eq!(results.into_values_iter().next().unwrap().unwrap()[0], Some(ex.into()));
     /// }
     /// ```
-    fn prepare_query(&self, query: &str, base_iri: Option<&str>) -> Result<Self::PreparedQuery>;
+    fn prepare_query<'b>(&'a self, query: &str, base_iri: Option<&str>) -> Result<Self::PreparedQuery>;
 
     /// Retrieves quads with a filter on each quad component
     ///
@@ -102,15 +102,15 @@ pub trait RepositoryConnection: Clone {
     /// let results: Result<Vec<Quad>> = connection.quads_for_pattern(None, None, None, None).collect();
     /// assert_eq!(vec![quad], results.unwrap());
     /// ```
-    fn quads_for_pattern<'a>(
+    fn quads_for_pattern<'b>(
         &'a self,
         subject: Option<&NamedOrBlankNode>,
         predicate: Option<&NamedNode>,
         object: Option<&Term>,
         graph_name: Option<Option<&NamedOrBlankNode>>,
-    ) -> Box<dyn Iterator<Item = Result<Quad>> + 'a>
+    ) -> Box<dyn Iterator<Item = Result<Quad>> + 'b>
     where
-        Self: 'a;
+        'a: 'b;
 
     /// Loads a graph file (i.e. triples) into the repository
     ///

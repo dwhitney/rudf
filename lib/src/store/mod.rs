@@ -69,7 +69,7 @@ impl<'a, S: StoreConnection> From<S> for StoreRepositoryConnection<'a, S> {
     }
 }
 
-impl<'a, S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<'a, S> {
+impl<'a, S: StoreConnection> RepositoryConnection<'a> for StoreRepositoryConnection<'a, S> {
     type PreparedQuery = SimplePreparedQuery<'a, S>;
 
     fn prepare_query(&self, query: &str, base_iri: Option<&str>) -> Result<SimplePreparedQuery<'a, S>> {
@@ -77,14 +77,14 @@ impl<'a, S: StoreConnection> RepositoryConnection for StoreRepositoryConnection<
     }
 
     fn quads_for_pattern<'b>(
-        &'b self,
+        &'a self,
         subject: Option<&NamedOrBlankNode>,
         predicate: Option<&NamedNode>,
         object: Option<&Term>,
         graph_name: Option<Option<&NamedOrBlankNode>>,
     ) -> Box<dyn Iterator<Item = Result<Quad>> + 'b>
     where
-        Self: 'b
+        'a: 'b
     {
         let subject = subject.map(|s| s.into());
         let predicate = predicate.map(|p| p.into());

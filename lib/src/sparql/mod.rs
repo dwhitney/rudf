@@ -25,9 +25,11 @@ pub use crate::sparql::model::QueryResultSyntax;
 pub use crate::sparql::model::Variable;
 
 /// A prepared [SPARQL query](https://www.w3.org/TR/sparql11-query/)
-pub trait PreparedQuery {
+pub trait PreparedQuery<'a> {
     /// Evaluates the query and returns its results
-    fn exec(&self) -> Result<QueryResult>;
+    fn exec<'b>(&'a self) -> Result<QueryResult<'b>>
+    where
+        'a: 'b;
 }
 
 /// An implementation of `PreparedQuery` for internal use
@@ -114,8 +116,11 @@ impl<'a, S: StoreConnection + 'a> SimplePreparedQuery<'a, S> {
     }
 }
 
-impl<'a, S: StoreConnection + 'a> PreparedQuery for SimplePreparedQuery<'a, S> {
-    fn exec(&self) -> Result<QueryResult<'_>> {
+impl<'a, S: StoreConnection + 'a> PreparedQuery<'a> for SimplePreparedQuery<'a, S> {
+    fn exec<'b>(&'a self) -> Result<QueryResult<'b>> 
+    where
+        'a: 'b 
+    {
         match &self.0 {
             SimplePreparedQueryOptions::Select {
                 plan,

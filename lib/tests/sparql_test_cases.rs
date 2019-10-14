@@ -185,7 +185,13 @@ fn sparql_w3c_query_evaluation_testsuite() -> Result<()> {
                                 expected_graph,
                                 actual_graph,
                                 Query::parse(&read_file_to_string(&test.query)?, Some(&test.query)).unwrap(),
-                                repository_to_string(&repository)
+                                //repository_to_string(&repository)
+                                repository
+                                    .connection()
+                                    .unwrap()
+                                    .quads_for_pattern(None, None, None, None)
+                                    .map(|q| q.unwrap().to_string() + "\n")
+                                    .collect::<String>()
                             ))
                         }
                     }
@@ -206,15 +212,6 @@ fn sparql_w3c_query_evaluation_testsuite() -> Result<()> {
     Ok(())
 }
 
-fn repository_to_string(repository: impl Repository) -> String {
-    repository
-        .connection()
-        .unwrap()
-        .quads_for_pattern(None, None, None, None)
-        .map(|q| q.unwrap().to_string() + "\n")
-        .collect()
-}
-
 fn load_graph(url: &str) -> Result<SimpleGraph> {
     let repository = MemoryRepository::default();
     load_graph_to_repository(url, &mut repository.connection().unwrap(), None)?;
@@ -226,9 +223,9 @@ fn load_graph(url: &str) -> Result<SimpleGraph> {
         .collect())
 }
 
-fn load_graph_to_repository(
+fn load_graph_to_repository<'a>(
     url: &str,
-    connection: &mut <&MemoryRepository as Repository>::Connection,
+    connection: &mut <&'a MemoryRepository as Repository<'a>>::Connection,
     to_graph_name: Option<&NamedOrBlankNode>,
 ) -> Result<()> {
     let syntax = if url.ends_with(".nt") {
