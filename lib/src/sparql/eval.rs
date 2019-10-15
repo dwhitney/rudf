@@ -196,6 +196,12 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 }));
                 iter
             })),
+            PlanNode::Service {
+                child,
+                ..
+            } => {
+                Box::new(self.eval_plan(&*child, from, service_handler))
+            },
             PlanNode::PathPatternJoin {
                 child,
                 subject,

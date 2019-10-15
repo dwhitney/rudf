@@ -1,3 +1,4 @@
+use crate::sparql::GraphPattern;
 use crate::sparql::eval::StringOrStoreString;
 use crate::store::numeric_encoder::{
     EncodedQuad, EncodedTerm, Encoder, MemoryStrStore, StrContainer, StrLookup,
@@ -14,6 +15,12 @@ pub enum PlanNode {
     Init,
     StaticBindings {
         tuples: Vec<EncodedTuple>,
+    },
+    Service {
+        service_name: PatternValue,
+        child: Box<PlanNode>,
+        graph_pattern: GraphPattern,
+        silent: bool,
     },
     QuadPatternJoin {
         child: Box<PlanNode>,
@@ -100,6 +107,12 @@ impl PlanNode {
                     }
                 }
             }
+            PlanNode::Service{
+                child,
+                ..
+            } => {
+               child.add_variables(set); 
+            },
             PlanNode::QuadPatternJoin {
                 child,
                 subject,
