@@ -9,7 +9,8 @@ mod plan;
 mod plan_builder;
 mod xml_results;
 
-use crate::sparql::algebra::QueryVariants;
+use crate::model::NamedNode;
+use crate::sparql::algebra::{GraphPattern, QueryVariants};
 use crate::sparql::eval::SimpleEvaluator;
 use crate::sparql::parser::read_sparql_query;
 use crate::sparql::plan::TripleTemplate;
@@ -24,10 +25,12 @@ pub use crate::sparql::model::QueryResult;
 pub use crate::sparql::model::QueryResultSyntax;
 pub use crate::sparql::model::Variable;
 
+pub type ServiceHandler<'a> = fn(node: NamedNode) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
+
 /// A prepared [SPARQL query](https://www.w3.org/TR/sparql11-query/)
 pub trait PreparedQuery {
     /// Evaluates the query and returns its results
-    fn exec(&self) -> Result<QueryResult>;
+    fn exec<'a>(&'a self, service_handler: Option<ServiceHandler<'a>>) -> Result<QueryResult>;
 }
 
 /// An implementation of `PreparedQuery` for internal use
@@ -115,23 +118,23 @@ impl<S: StoreConnection> SimplePreparedQuery<S> {
 }
 
 impl<S: StoreConnection> PreparedQuery for SimplePreparedQuery<S> {
-    fn exec(&self) -> Result<QueryResult<'_>> {
+    fn exec<'a>(&'a self, service_handler: Option<ServiceHandler<'a>>) -> Result<QueryResult<'_>> {
         match &self.0 {
             SimplePreparedQueryOptions::Select {
                 plan,
                 variables,
                 evaluator,
-            } => evaluator.evaluate_select_plan(&plan, &variables),
+            } => evaluator.evaluate_select_plan(&plan, &variables, service_handler),
             SimplePreparedQueryOptions::Ask { plan, evaluator } => {
-                evaluator.evaluate_ask_plan(&plan)
+                evaluator.evaluate_ask_plan(&plan, service_handler)
             }
             SimplePreparedQueryOptions::Construct {
                 plan,
                 construct,
                 evaluator,
-            } => evaluator.evaluate_construct_plan(&plan, &construct),
+            } => evaluator.evaluate_construct_plan(&plan, &construct, service_handler),
             SimplePreparedQueryOptions::Describe { plan, evaluator } => {
-                evaluator.evaluate_describe_plan(&plan)
+                evaluator.evaluate_describe_plan(&plan, service_handler)
             }
         }
     }
