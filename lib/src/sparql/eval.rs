@@ -484,8 +484,8 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
 
     fn evaluate_service<'b>(
         &'b self,
-        service_name: &PatternValue,
-        graph_pattern: &GraphPattern,
+        service_name: &'a PatternValue,
+        graph_pattern: &'a GraphPattern,
         variables: &'b [Variable],
         from: EncodedTuple,
     ) -> Result<EncodedTuplesIterator<'b>> {
@@ -494,7 +494,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 .decode_named_node(get_pattern_value(service_name, &[]).ok_or_else(|| {
                     format_err!("The SERVICE handler name variable is not bound")
                 })?)?;
-        let bindings = self.service_handler.handle(&service_name, graph_pattern.clone()).ok_or_else(|| {
+        let bindings = self.service_handler.handle(service_name.clone(), graph_pattern.clone()).ok_or_else(|| {
             format_err!(
                 "The handler supplied was unable to produce any result set for service {}",
                 service_name

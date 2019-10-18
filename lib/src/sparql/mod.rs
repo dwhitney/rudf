@@ -194,7 +194,7 @@ pub trait ServiceHandler {
     /// Returns `None` if there is no handler for the service.
     fn handle<'a>(
         &'a self,
-        node: &NamedNode,
+        node: NamedNode,
         pattern: GraphPattern
     ) -> Option<Result<BindingsIterator<'a>>>;
 }
@@ -205,7 +205,7 @@ struct EmptyServiceHandler {}
 impl ServiceHandler for EmptyServiceHandler {
     fn handle(
         &self,
-        _node: &NamedNode,
+        _node: NamedNode,
         _pattern: GraphPattern
     ) -> Option<Result<BindingsIterator<'static>>> {
         None

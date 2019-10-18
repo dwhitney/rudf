@@ -12,7 +12,7 @@ fn simple_service_test() {
     impl ServiceHandler for TestServiceHandler {
         fn handle<'a>(
             &'a self,
-            _named_node: &NamedNode,
+            _named_node: NamedNode,
             pattern: GraphPattern
         ) -> Option<Result<BindingsIterator<'a>>> {
             fn pattern_handler<'a>(graph_pattern: GraphPattern) -> Result<BindingsIterator<'a>> {
@@ -57,14 +57,14 @@ fn two_service_test() {
     impl ServiceHandler for TwoServiceTest {
         fn handle<'a>(
             &'a self,
-            named_node: &NamedNode,
+            named_node: NamedNode,
             pattern: GraphPattern
         ) -> Option<Result<BindingsIterator<'a>>> {
             let service1 = NamedNode::parse("http://service1.org").unwrap();
             let service2 = NamedNode::parse("http://service2.org").unwrap();
-            if named_node == &service1 {
+            if named_node == service1 {
                 Some(TwoServiceTest::handle_service1(pattern))
-            } else if named_node == &service2 {
+            } else if named_node == service2 {
                 Some(TwoServiceTest::handle_service2(pattern))
             } else {
                 None
@@ -135,7 +135,7 @@ fn silent_service_empty_set_test() {
     impl ServiceHandler for ServiceTest {
         fn handle<'a>(
             &'a self,
-            _named_node: &NamedNode,
+            _named_node: NamedNode,
             pattern: GraphPattern
         ) -> Option<Result<BindingsIterator<'a>>> {
             Some(ServiceTest::handle_service(pattern))
@@ -180,7 +180,7 @@ fn non_silent_service_test() {
     impl ServiceHandler for ServiceTest {
         fn handle<'a>(
             &'a self,
-            _named_node: &NamedNode,
+            _named_node: NamedNode,
             pattern: GraphPattern
         ) -> Option<Result<BindingsIterator<'a>>> {
             Some(ServiceTest::handle_service(pattern))
