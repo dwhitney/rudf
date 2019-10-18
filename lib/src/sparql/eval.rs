@@ -494,14 +494,14 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                 .decode_named_node(get_pattern_value(service_name, &[]).ok_or_else(|| {
                     format_err!("The SERVICE handler name variable is not bound")
                 })?)?;
-        let service = self.service_handler.handle(&service_name).ok_or_else(|| {
+        let bindings = self.service_handler.handle(&service_name, graph_pattern.clone()).ok_or_else(|| {
             format_err!(
                 "The handler supplied was unable to produce any result set for service {}",
                 service_name
             )
-        })?;
+        })??;
         Ok(Box::new(
-            self.encode_bindings(variables, service(graph_pattern.clone())?)
+            self.encode_bindings(variables, bindings)
                 .flat_map(move |binding| {
                     binding
                         .map(|binding| combine_tuples(&binding, &from))

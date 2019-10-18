@@ -195,7 +195,8 @@ pub trait ServiceHandler {
     fn handle<'a>(
         &'a self,
         node: &NamedNode,
-    ) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)>;
+        pattern: GraphPattern
+    ) -> Option<Result<BindingsIterator<'a>>>;
 }
 
 #[derive(Default)]
@@ -205,7 +206,8 @@ impl ServiceHandler for EmptyServiceHandler {
     fn handle(
         &self,
         _node: &NamedNode,
-    ) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'static>>)> {
+        _pattern: GraphPattern
+    ) -> Option<Result<BindingsIterator<'static>>> {
         None
     }
 }

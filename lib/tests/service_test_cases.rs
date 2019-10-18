@@ -13,14 +13,15 @@ fn simple_service_test() {
         fn handle<'a>(
             &'a self,
             _named_node: &NamedNode,
-        ) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)> {
+            pattern: GraphPattern
+        ) -> Option<Result<BindingsIterator<'a>>> {
             fn pattern_handler<'a>(graph_pattern: GraphPattern) -> Result<BindingsIterator<'a>> {
                 let triples =
                     b"<http://example.com/s> <http://example.com/p> <http://example.com/o> ."
                         .as_ref();
                 do_pattern(triples, graph_pattern, QueryOptions::default())
             };
-            Some(pattern_handler)
+            Some(pattern_handler(pattern))
         }
     }
 
@@ -57,13 +58,14 @@ fn two_service_test() {
         fn handle<'a>(
             &'a self,
             named_node: &NamedNode,
-        ) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)> {
+            pattern: GraphPattern
+        ) -> Option<Result<BindingsIterator<'a>>> {
             let service1 = NamedNode::parse("http://service1.org").unwrap();
             let service2 = NamedNode::parse("http://service2.org").unwrap();
             if named_node == &service1 {
-                Some(TwoServiceTest::handle_service1)
+                Some(TwoServiceTest::handle_service1(pattern))
             } else if named_node == &service2 {
-                Some(TwoServiceTest::handle_service2)
+                Some(TwoServiceTest::handle_service2(pattern))
             } else {
                 None
             }
@@ -134,8 +136,9 @@ fn silent_service_empty_set_test() {
         fn handle<'a>(
             &'a self,
             _named_node: &NamedNode,
-        ) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)> {
-            Some(ServiceTest::handle_service)
+            pattern: GraphPattern
+        ) -> Option<Result<BindingsIterator<'a>>> {
+            Some(ServiceTest::handle_service(pattern))
         }
     }
 
@@ -178,8 +181,9 @@ fn non_silent_service_test() {
         fn handle<'a>(
             &'a self,
             _named_node: &NamedNode,
-        ) -> Option<(fn(GraphPattern) -> Result<BindingsIterator<'a>>)> {
-            Some(ServiceTest::handle_service)
+            pattern: GraphPattern
+        ) -> Option<Result<BindingsIterator<'a>>> {
+            Some(ServiceTest::handle_service(pattern))
         }
     }
 
