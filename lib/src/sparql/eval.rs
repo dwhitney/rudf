@@ -43,7 +43,7 @@ pub struct SimpleEvaluator<S: StoreConnection> {
     dataset: DatasetView<S>,
     base_iri: Option<Iri<String>>,
     bnodes_map: Mutex<BTreeMap<u128, u128>>,
-    now: DateTime<FixedOffset>,
+    //now: DateTime<FixedOffset>,
     service_handler: Box<dyn ServiceHandler>,
 }
 
@@ -57,7 +57,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
             dataset,
             bnodes_map: Mutex::new(BTreeMap::default()),
             base_iri,
-            now: Utc::now().with_timezone(&FixedOffset::east(0)),
+            //now: Utc::now().with_timezone(&FixedOffset::east(0)),
             service_handler,
         }
     }
@@ -1221,7 +1221,7 @@ impl<'a, S: StoreConnection + 'a> SimpleEvaluator<S> {
                     ENCODED_EMPTY_STRING_LITERAL
                 })
             }
-            PlanExpression::Now => Some(self.now.into()),
+            PlanExpression::Now => None,//Some(self.now.into()),
             PlanExpression::UUID => self.build_named_node(
                 Uuid::new_v4()
                     .to_urn()
