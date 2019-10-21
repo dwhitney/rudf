@@ -21,7 +21,7 @@ quick-xml = "0.17"
 ordered-float = "1"
 num-traits = "0.2"
 rust_decimal = "1"
-chrono = "0.4"
+chrono = { version = "0.4", features= ["wasm-bindgen"] }
 rand = "0.7"
 md-5 = "0.8"
 sha-1 = "0.8"
